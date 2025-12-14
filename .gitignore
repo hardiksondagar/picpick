@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+ENV/
+
+# PicPick generated files
+photos.db
+photos.db-journal
+thumbnails/
+*.log
+face_detection.log
+
+# Photos directory (users add their own)
+photos/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Distribution
+dist/
+build/
+*.egg-info/
+

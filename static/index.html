@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PicPick - Smart Photo Curator</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">PicPick</h1>
+                <div class="stats" id="stats">
+                    <span class="stat"><span id="stat-total">0</span> photos</span>
+                    <span class="stat"><span id="stat-clusters">0</span> clusters</span>
+                    <span class="stat starred"><span id="stat-starred">0</span> ★ starred</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="filters">
+                    <select id="filter-folder" class="filter-select">
+                        <option value="">All Folders</option>
+                    </select>
+                    <div class="person-picker" id="person-picker">
+                        <button class="person-picker-btn" id="person-picker-btn">
+                            <span class="person-picker-label">All People</span>
+                            <span class="person-picker-arrow">▼</span>
+                        </button>
+                        <div class="person-picker-dropdown" id="person-picker-dropdown">
+                            <div class="person-option selected" data-person-id="" data-face-id="" data-name="All People">
+                                <span class="person-name">All People</span>
+                            </div>
+                            <!-- Person options loaded dynamically -->
+                        </div>
+                    </div>
+                    <button id="filter-starred" class="filter-btn" title="Show starred only">★</button>
+                </div>
+                <div class="keyboard-hint">
+                    <span>←→ clusters</span>
+                    <span>↑↓ photos</span>
+                    <span>S/Space star</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Progress Bar -->
+        <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+            <div class="progress-text" id="progress-text">0% rated</div>
+        </div>
+
+        <!-- Main Grid -->
+        <main class="main">
+            <div class="grid" id="photo-grid">
+                <!-- Photos loaded dynamically -->
+            </div>
+
+            <!-- Loading indicator -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Loading photos...</p>
+            </div>
+
+            <!-- Load more trigger -->
+            <div id="load-more-trigger"></div>
+        </main>
+
+        <!-- Photo Modal -->
+        <div class="modal" id="photo-modal">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <button class="modal-close" id="modal-close">×</button>
+                <button class="modal-nav modal-prev" id="modal-prev">‹</button>
+                <button class="modal-nav modal-next" id="modal-next">›</button>
+
+                <div class="modal-image-container">
+                    <img id="modal-image" src="" alt="">
+                </div>
+
+                <div class="modal-sidebar">
+                    <div class="modal-info">
+                        <h3 id="modal-filename">filename.jpg</h3>
+                        <p id="modal-folder" class="modal-meta">Folder</p>
+                        <p id="modal-datetime" class="modal-meta">Date & Time</p>
+                        <p id="modal-dimensions" class="modal-meta">Dimensions</p>
+                        <p id="modal-cluster" class="modal-meta">Cluster info</p>
+                    </div>
+
+                    <div class="modal-rating">
+                        <button class="star-toggle" id="modal-star-toggle">☆ Star</button>
+                    </div>
+
+                    <!-- Cluster photos -->
+                    <div class="cluster-photos" id="cluster-photos">
+                        <h4>Similar Photos (<span id="cluster-count">0</span>)</h4>
+                        <div class="cluster-grid" id="cluster-grid"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+
