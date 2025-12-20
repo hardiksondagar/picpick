@@ -7,13 +7,14 @@ Uses two-stage clustering: near-duplicates first, then semantic similarity.
 import os
 import sqlite3
 import hashlib
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 import time
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from PIL.ExifTags import TAGS
 import imagehash
 from tqdm import tqdm
@@ -91,75 +92,63 @@ def get_db_connection():
 
 def init_database():
     """Initialize the SQLite database schema."""
+    schema_file = SCRIPT_DIR / "schema" / "schema.sql"
+
+    if not schema_file.exists():
+        raise FileNotFoundError(f"Schema file not found: {schema_file}")
+
+    with open(schema_file, 'r') as f:
+        schema_sql = f.read()
+
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    cursor.executescript("""
-        -- Photos table
-        CREATE TABLE IF NOT EXISTS photos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filepath TEXT UNIQUE NOT NULL,
-            filename TEXT NOT NULL,
-            folder TEXT NOT NULL,
-            file_hash TEXT NOT NULL,
-            dhash TEXT,
-            taken_at TIMESTAMP,
-            width INTEGER,
-            height INTEGER,
-            file_size INTEGER,
-            cluster_id INTEGER,
-            duplicate_group_id INTEGER,
-            is_cluster_representative BOOLEAN DEFAULT 0,
-            rating INTEGER DEFAULT 0,
-            is_starred BOOLEAN DEFAULT 0,
-            notes TEXT,
-            sharpness REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        -- Embeddings table (stored separately for efficiency)
-        CREATE TABLE IF NOT EXISTS embeddings (
-            photo_id INTEGER PRIMARY KEY,
-            clip_embedding BLOB,
-            FOREIGN KEY (photo_id) REFERENCES photos(id)
-        );
-
-        -- Clusters table
-        CREATE TABLE IF NOT EXISTS clusters (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            photo_count INTEGER DEFAULT 0,
-            representative_photo_id INTEGER,
-            avg_timestamp TIMESTAMP,
-            FOREIGN KEY (representative_photo_id) REFERENCES photos(id)
-        );
-
-        -- Indexes for fast queries
-        CREATE INDEX IF NOT EXISTS idx_photos_cluster ON photos(cluster_id);
-        CREATE INDEX IF NOT EXISTS idx_photos_duplicate_group ON photos(duplicate_group_id);
-        CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);
-        CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(is_starred);
-        CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder);
-        CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash);
-    """)
-
+    cursor.executescript(schema_sql)
     conn.commit()
     conn.close()
     print("✓ Database initialized")
 
 
-def get_exif_datetime(img: Image.Image) -> Optional[datetime]:
-    """Extract datetime from EXIF data."""
+def get_exif_data(img: Image.Image) -> tuple[Optional[datetime], dict]:
+    """Extract datetime and all EXIF data from image."""
+    taken_at = None
+    exif_dict = {}
+
     try:
         exif = img._getexif()
         if exif:
             for tag_id, value in exif.items():
                 tag = TAGS.get(tag_id, tag_id)
-                if tag == 'DateTimeOriginal':
-                    return datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+
+                # Parse datetime
+                if tag == 'DateTimeOriginal' and isinstance(value, str):
+                    try:
+                        taken_at = datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+                    except ValueError:
+                        pass
+
+                # Store all EXIF data (convert to JSON-serializable types)
+                try:
+                    if isinstance(value, bytes):
+                        # Skip binary data (like thumbnails)
+                        if len(value) > 256:
+                            continue
+                        value = value.decode('utf-8', errors='ignore')
+                    elif isinstance(value, (tuple, list)):
+                        # Convert IFDRational and other types in sequences
+                        value = [float(v) if hasattr(v, 'numerator') else v for v in value]
+                    elif hasattr(value, 'numerator'):
+                        # IFDRational type - convert to float
+                        value = float(value)
+                    elif not isinstance(value, (str, int, float, bool, type(None))):
+                        value = str(value)
+
+                    exif_dict[str(tag)] = value
+                except Exception:
+                    continue
     except Exception:
         pass
-    return None
+
+    return taken_at, exif_dict
 
 
 def compute_file_hash(filepath: Path) -> str:
@@ -174,6 +163,8 @@ def compute_file_hash(filepath: Path) -> str:
 def compute_dhash(img: Image.Image, hash_size: int = 16) -> str:
     """Compute difference hash for similarity detection."""
     try:
+        # Auto-rotate before hashing for consistent results
+        img = ImageOps.exif_transpose(img)
         return str(imagehash.dhash(img, hash_size=hash_size))
     except Exception:
         return ""
@@ -182,6 +173,9 @@ def compute_dhash(img: Image.Image, hash_size: int = 16) -> str:
 def compute_sharpness(img: Image.Image) -> float:
     """Compute image sharpness using Laplacian variance."""
     try:
+        # Auto-rotate before computing sharpness
+        img = ImageOps.exif_transpose(img)
+
         # Convert to grayscale and resize for speed
         gray = img.convert('L')
         gray.thumbnail((500, 500), Image.Resampling.LANCZOS)
@@ -243,8 +237,10 @@ def index_photos(photos: list[Path]):
             file_size = stat.st_size
 
             with Image.open(photo_path) as img:
-                width, height = img.size
-                taken_at = get_exif_datetime(img)
+                # Get dimensions after auto-rotation for accurate width/height
+                img_rotated = ImageOps.exif_transpose(img)
+                width, height = img_rotated.size
+                taken_at, exif_dict = get_exif_data(img)
                 dhash = compute_dhash(img)
                 sharpness = compute_sharpness(img)
 
@@ -255,10 +251,13 @@ def index_photos(photos: list[Path]):
             except ValueError:
                 folder = str(photo_path.parent)
 
+            # Serialize EXIF data to JSON
+            exif_json = json.dumps(exif_dict) if exif_dict else None
+
             cursor.execute("""
                 INSERT OR IGNORE INTO photos
-                (filepath, filename, folder, file_hash, dhash, taken_at, width, height, file_size, sharpness)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (filepath, filename, folder, file_hash, dhash, taken_at, width, height, file_size, sharpness, exif_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 str(photo_path),
                 photo_path.name,
@@ -269,7 +268,8 @@ def index_photos(photos: list[Path]):
                 width,
                 height,
                 file_size,
-                sharpness
+                sharpness,
+                exif_json
             ))
 
             if idx % commit_every == 0:
@@ -320,7 +320,10 @@ def compute_embeddings():
 
         for photo in batch:
             try:
-                img = Image.open(photo['filepath']).convert('RGB')
+                img = Image.open(photo['filepath'])
+                # Auto-rotate before embedding
+                img = ImageOps.exif_transpose(img)
+                img = img.convert('RGB')
                 img.thumbnail((336, 336), Image.Resampling.LANCZOS)
                 images.append(img)
                 valid_ids.append(photo['id'])

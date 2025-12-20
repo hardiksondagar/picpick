@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
-from PIL import Image
+from PIL import Image, ImageOps
 import uvicorn
 
 # Configuration
@@ -147,76 +147,6 @@ def update_indexing_job(job_id: int, **kwargs):
     conn.close()
 
 
-def init_database():
-    """Initialize database schema if it doesn't exist."""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.executescript("""
-        -- Photos table
-        CREATE TABLE IF NOT EXISTS photos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filepath TEXT UNIQUE NOT NULL,
-            filename TEXT NOT NULL,
-            folder TEXT NOT NULL,
-            file_hash TEXT NOT NULL,
-            dhash TEXT,
-            taken_at TIMESTAMP,
-            width INTEGER,
-            height INTEGER,
-            file_size INTEGER,
-            cluster_id INTEGER,
-            is_cluster_representative BOOLEAN DEFAULT 0,
-            rating INTEGER DEFAULT 0,
-            is_starred BOOLEAN DEFAULT 0,
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        -- Embeddings table
-        CREATE TABLE IF NOT EXISTS embeddings (
-            photo_id INTEGER PRIMARY KEY,
-            clip_embedding BLOB,
-            FOREIGN KEY (photo_id) REFERENCES photos(id)
-        );
-
-        -- Clusters table
-        CREATE TABLE IF NOT EXISTS clusters (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            photo_count INTEGER DEFAULT 0,
-            representative_photo_id INTEGER,
-            avg_timestamp TIMESTAMP,
-            FOREIGN KEY (representative_photo_id) REFERENCES photos(id)
-        );
-
-
-        -- Indexing jobs table
-        CREATE TABLE IF NOT EXISTS indexing_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            directory TEXT NOT NULL,
-            status TEXT NOT NULL, -- 'running', 'completed', 'cancelled', 'error'
-            phase TEXT, -- 'scanning', 'hashing', 'embeddings', 'duplicates', 'clustering'
-            current INTEGER DEFAULT 0,
-            total INTEGER DEFAULT 0,
-            message TEXT,
-            error TEXT,
-            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP
-        );
-
-        -- Indexes for performance
-        CREATE INDEX IF NOT EXISTS idx_photos_cluster ON photos(cluster_id);
-        CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder);
-        CREATE INDEX IF NOT EXISTS idx_photos_taken_at ON photos(taken_at);
-        CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);
-        CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(is_starred);
-    """)
-
-    conn.commit()
-    conn.close()
-
-
 # ============== API Models ==============
 
 class PhotoRating(BaseModel):
@@ -224,6 +154,9 @@ class PhotoRating(BaseModel):
 
 class PhotoStar(BaseModel):
     is_starred: bool
+
+class PhotoReject(BaseModel):
+    is_rejected: bool
 
 class PhotoNotes(BaseModel):
     notes: str
@@ -311,6 +244,7 @@ def get_stats():
             'total_clusters': 0,
             'rated_photos': 0,
             'starred_photos': 0,
+            'rejected_photos': 0,
             'keeper_photos': 0,
             'rating_distribution': {},
             'folders': []
@@ -328,11 +262,14 @@ def get_stats():
         cursor.execute("SELECT COUNT(*) as cnt FROM clusters")
         stats['total_clusters'] = cursor.fetchone()['cnt']
 
-        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0")
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0 OR is_starred = 1 OR is_rejected = 1")
         stats['rated_photos'] = cursor.fetchone()['cnt']
 
         cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
         stats['starred_photos'] = cursor.fetchone()['cnt']
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_rejected = 1")
+        stats['rejected_photos'] = cursor.fetchone()['cnt']
 
         cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating >= 3")
         stats['keeper_photos'] = cursor.fetchone()['cnt']
@@ -379,6 +316,7 @@ def get_clusters(
     folder: Optional[str] = None,
     min_rating: Optional[int] = None,
     starred_only: bool = False,
+    rejected_only: bool = False,
     unrated_only: bool = False
 ):
     """Get clusters with their representative photos."""
@@ -411,6 +349,9 @@ def get_clusters(
 
         if starred_only:
             conditions.append("p.is_starred = 1")
+
+        if rejected_only:
+            conditions.append("p.is_rejected = 1")
 
         if unrated_only:
             conditions.append("p.rating = 0")
@@ -457,6 +398,7 @@ def get_clusters(
                     p.folder,
                     p.rating,
                     p.is_starred,
+                    p.is_rejected,
                     p.taken_at,
                     p.width,
                     p.height
@@ -480,6 +422,7 @@ def get_clusters(
                         'folder': row['folder'],
                         'rating': row['rating'],
                         'is_starred': bool(row['is_starred']),
+                        'is_rejected': bool(row['is_rejected']),
                         'taken_at': row['taken_at'],
                         'width': row['width'],
                         'height': row['height']
@@ -508,6 +451,7 @@ def get_clusters(
                 p.folder,
                 p.rating,
                 p.is_starred,
+                p.is_rejected,
                 p.taken_at,
                 p.width,
                 p.height
@@ -532,6 +476,7 @@ def get_clusters(
                     'folder': row['folder'],
                     'rating': row['rating'],
                     'is_starred': bool(row['is_starred']),
+                    'is_rejected': bool(row['is_rejected']),
                     'taken_at': row['taken_at'],
                     'width': row['width'],
                     'height': row['height']
@@ -567,8 +512,8 @@ def get_cluster_photos(cluster_id: int):
 
     cursor.execute("""
         SELECT
-            id, filepath, filename, folder, rating, is_starred,
-            taken_at, width, height, is_cluster_representative, notes
+            id, filepath, filename, folder, rating, is_starred, is_rejected,
+            taken_at, width, height, is_cluster_representative, notes, exif_data
         FROM photos
         WHERE cluster_id = ?
         ORDER BY taken_at ASC, id ASC
@@ -576,19 +521,29 @@ def get_cluster_photos(cluster_id: int):
 
     photos = []
     for row in cursor.fetchall():
-        photos.append({
+        photo = {
             'id': row['id'],
             'filepath': row['filepath'],
             'filename': row['filename'],
             'folder': row['folder'],
             'rating': row['rating'],
             'is_starred': bool(row['is_starred']),
+            'is_rejected': bool(row['is_rejected']),
             'taken_at': row['taken_at'],
             'width': row['width'],
             'height': row['height'],
             'is_representative': bool(row['is_cluster_representative']),
             'notes': row['notes']
-        })
+        }
+
+        # Parse EXIF data if requested (optional - can be removed if not needed in cluster view)
+        if row['exif_data']:
+            try:
+                photo['exif_data'] = json.loads(row['exif_data'])
+            except json.JSONDecodeError:
+                photo['exif_data'] = {}
+
+        photos.append(photo)
 
     conn.close()
     return {'photos': photos, 'count': len(photos)}
@@ -614,7 +569,17 @@ def get_photo(photo_id: int):
 
     photo = dict(row)
     photo['is_starred'] = bool(photo['is_starred'])
+    photo['is_rejected'] = bool(photo['is_rejected'])
     photo['is_cluster_representative'] = bool(photo['is_cluster_representative'])
+
+    # Parse EXIF data from JSON
+    if photo.get('exif_data'):
+        try:
+            photo['exif_data'] = json.loads(photo['exif_data'])
+        except json.JSONDecodeError:
+            photo['exif_data'] = {}
+    else:
+        photo['exif_data'] = {}
 
     conn.close()
     return photo
@@ -667,6 +632,28 @@ def update_star(photo_id: int, data: PhotoStar):
     return {"success": True, "photo_id": photo_id, "is_starred": data.is_starred}
 
 
+@app.put("/api/photos/{photo_id}/reject")
+def update_reject(photo_id: int, data: PhotoReject):
+    """Toggle photo rejected status."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE photos
+        SET is_rejected = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (data.is_rejected, photo_id))
+
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "photo_id": photo_id, "is_rejected": data.is_rejected}
+
+
 @app.put("/api/photos/{photo_id}/notes")
 def update_notes(photo_id: int, data: PhotoNotes):
     """Update photo notes."""
@@ -717,10 +704,13 @@ def get_thumbnail_path(photo_id: int, width: int) -> Path:
 
 
 def generate_thumbnail(source_path: Path, thumb_path: Path, width: int) -> Path:
-    """Generate and cache a thumbnail."""
+    """Generate and cache a thumbnail with proper EXIF rotation."""
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
 
     with Image.open(source_path) as img:
+        # Auto-rotate based on EXIF orientation (handles all orientation values)
+        img = ImageOps.exif_transpose(img)
+
         # Convert to RGB if necessary (handles RGBA, P mode, etc.)
         if img.mode in ('RGBA', 'P', 'LA'):
             img = img.convert('RGB')
@@ -844,14 +834,6 @@ if __name__ == "__main__":
     (THUMB_DIR / "400").mkdir(exist_ok=True)
     (THUMB_DIR / "1200").mkdir(exist_ok=True)
     print(f"  ✓ Thumbnails: {THUMB_DIR}")
-
-    # Initialize database schema
-    print("Initializing database...")
-    try:
-        init_database()
-        print(f"  ✓ Database: {_current_db_path}")
-    except Exception as e:
-        print(f"  ⚠ Database init failed: {e}")
 
     print()
 

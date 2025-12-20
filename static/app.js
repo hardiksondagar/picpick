@@ -19,6 +19,7 @@ const state = {
     // Filters
     folder: '',
     starredOnly: false,
+    rejectedOnly: false,
 
     // Modal
     modalOpen: false,
@@ -46,18 +47,6 @@ const state = {
 // ============================================
 
 const api = {
-    async getDatabases() {
-        const res = await fetch('/api/databases');
-        return res.json();
-    },
-
-    async switchDatabase(dbName) {
-        const res = await fetch(`/api/databases/switch?db_name=${encodeURIComponent(dbName)}`, {
-            method: 'POST'
-        });
-        return res.json();
-    },
-
     async getIndexingStatus() {
         const res = await fetch('/api/index/status');
         return res.json();
@@ -73,6 +62,7 @@ const api = {
 
         if (state.folder) params.set('folder', state.folder);
         if (state.starredOnly) params.set('starred_only', 'true');
+        if (state.rejectedOnly) params.set('rejected_only', 'true');
 
         const res = await fetch(`/api/clusters?${params}`);
         return res.json();
@@ -101,6 +91,15 @@ const api = {
         return res.json();
     },
 
+    async updateReject(photoId, isRejected) {
+        const res = await fetch(`/api/photos/${photoId}/reject`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_rejected: isRejected })
+        });
+        return res.json();
+    },
+
     async updateClusterRating(clusterId, rating) {
         const res = await fetch(`/api/clusters/${clusterId}/rating`, {
             method: 'PUT',
@@ -119,9 +118,6 @@ const elements = {
     grid: document.getElementById('photo-grid'),
     loading: document.getElementById('loading'),
     loadMoreTrigger: document.getElementById('load-more-trigger'),
-
-    // Database selector
-    databaseSelector: document.getElementById('database-selector'),
 
     // Empty state
     emptyState: document.getElementById('empty-state'),
@@ -146,12 +142,15 @@ const elements = {
     statTotal: document.getElementById('stat-total'),
     statClusters: document.getElementById('stat-clusters'),
     statStarred: document.getElementById('stat-starred'),
+    statRejected: document.getElementById('stat-rejected'),
+    statProgress: document.getElementById('stat-progress'),
     progressBar: document.getElementById('progress-bar'),
     progressText: document.getElementById('progress-text'),
 
     // Filters
     filterFolder: document.getElementById('filter-folder'),
     filterStarred: document.getElementById('filter-starred'),
+    filterRejected: document.getElementById('filter-rejected'),
     helpBtn: document.getElementById('help-btn'),
     helpTooltip: document.getElementById('help-tooltip'),
 
@@ -163,7 +162,12 @@ const elements = {
     modalDatetime: document.getElementById('modal-datetime'),
     modalDimensions: document.getElementById('modal-dimensions'),
     modalCluster: document.getElementById('modal-cluster'),
+    modalExif: document.getElementById('modal-exif'),
+    modalExifToggle: document.getElementById('modal-exif-toggle'),
+    modalExifDetails: document.getElementById('modal-exif-details'),
+    modalExifArrow: document.getElementById('modal-exif-arrow'),
     modalStarToggle: document.getElementById('modal-star-toggle'),
+    modalRejectToggle: document.getElementById('modal-reject-toggle'),
     modalClose: document.getElementById('modal-close'),
     modalPrev: document.getElementById('modal-prev'),
     modalNext: document.getElementById('modal-next'),
@@ -175,42 +179,23 @@ const elements = {
 // Rendering Functions
 // ============================================
 
-async function renderDatabases() {
-    try {
-        const data = await api.getDatabases();
-        const dbs = data.databases;
-
-        elements.databaseSelector.innerHTML = '';
-
-        dbs.forEach(db => {
-            const option = document.createElement('option');
-            option.value = db.name;
-            const sizeMB = (db.size / (1024 * 1024)).toFixed(1);
-            option.textContent = `${db.name} (${sizeMB} MB)`;
-            if (db.active) {
-                option.selected = true;
-            }
-            elements.databaseSelector.appendChild(option);
-        });
-    } catch (err) {
-        console.error('Failed to load databases:', err);
-        elements.databaseSelector.innerHTML = '<option>photos</option>';
-    }
-}
-
 function renderStats() {
     const { stats } = state;
 
     elements.statTotal.textContent = stats.total_photos?.toLocaleString() || 0;
     elements.statClusters.textContent = stats.total_clusters?.toLocaleString() || 0;
     elements.statStarred.textContent = stats.starred_photos?.toLocaleString() || 0;
+    elements.statRejected.textContent = stats.rejected_photos?.toLocaleString() || 0;
 
-    // Progress bar
+    // Progress percentage in top bar
     const progress = stats.total_photos > 0
-        ? (stats.rated_photos / stats.total_photos * 100)
+        ? Math.round((stats.starred_photos + stats.rejected_photos) / stats.total_photos * 100)
         : 0;
+    elements.statProgress.textContent = `${progress}%`;
+
+    // Progress bar (keep for visual indicator)
     elements.progressBar.style.width = `${progress}%`;
-    elements.progressText.textContent = `${Math.round(progress)}% rated`;
+    elements.progressText.textContent = `${progress}% reviewed`;
 
     // Populate folder filter
     if (stats.folders && elements.filterFolder.options.length <= 1) {
@@ -405,17 +390,73 @@ function renderModalContent() {
     elements.modalDimensions.textContent = `📐 ${photo.width} × ${photo.height}`;
     elements.modalCluster.textContent = `📷 Photo ${state.currentPhotoIndex + 1} of ${state.clusterPhotos.length} in cluster`;
 
+    // EXIF data
+    if (photo.exif_data && Object.keys(photo.exif_data).length > 0) {
+        elements.modalExif.classList.remove('hidden');
+        renderExifData(photo.exif_data);
+    } else {
+        elements.modalExif.classList.add('hidden');
+    }
+
     // Star toggle
     if (photo.is_starred) {
-        elements.modalStarToggle.className = 'w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-amber-400 rounded-xl text-white font-semibold transition-all';
+        elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-amber-400 rounded-xl text-white font-bold transition-all';
         elements.modalStarToggle.textContent = '★ Starred';
     } else {
-        elements.modalStarToggle.className = 'w-full px-4 py-3 bg-slate-700 border-2 border-slate-600 rounded-xl text-slate-100 font-semibold hover:border-amber-400 transition-all';
+        elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-accent hover:bg-gradient-primary hover:shadow-glow transition-all';
         elements.modalStarToggle.textContent = '☆ Star';
+    }
+
+    // Reject toggle
+    if (photo.is_rejected) {
+        elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-red-600 border-2 border-red-500 rounded-xl text-white font-bold transition-all';
+        elements.modalRejectToggle.textContent = '✕ Rejected';
+    } else {
+        elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-red-400 hover:bg-red-600 hover:shadow-glow transition-all';
+        elements.modalRejectToggle.textContent = '✕ Reject';
     }
 
     // Update cluster thumbnail selection
     updateClusterThumbnailSelection();
+}
+
+function renderExifData(exif) {
+    const interesting = {
+        'Make': '📷',
+        'Model': '📷',
+        'LensModel': '🔍',
+        'FNumber': '⚪',
+        'ExposureTime': '⏱️',
+        'ISO': '🎞️',
+        'ISOSpeedRatings': '🎞️',
+        'FocalLength': '📏',
+        'Flash': '⚡',
+        'Orientation': '🔄'
+    };
+
+    const html = Object.entries(interesting)
+        .filter(([key]) => exif[key] !== undefined)
+        .map(([key, icon]) => {
+            let value = exif[key];
+
+            // Format specific values
+            if (key === 'ExposureTime' && typeof value === 'number') {
+                value = value < 1 ? `1/${Math.round(1/value)}s` : `${value}s`;
+            } else if (key === 'FNumber' && typeof value === 'number') {
+                value = `f/${value}`;
+            } else if (key === 'FocalLength' && typeof value === 'number') {
+                value = `${value}mm`;
+            } else if ((key === 'ISO' || key === 'ISOSpeedRatings') && Array.isArray(value)) {
+                value = `ISO ${value[0]}`;
+            } else if (key === 'Flash') {
+                value = value === 0 ? 'Off' : 'On';
+            }
+
+            return `<div>${icon} ${key}: <span class="text-slate-300">${value}</span></div>`;
+        })
+        .join('');
+
+    elements.modalExifDetails.innerHTML = html || '<div class="text-slate-500">No camera data available</div>';
 }
 
 function renderClusterThumbnails() {
@@ -594,6 +635,25 @@ async function toggleStar() {
     refreshStats();
 }
 
+async function toggleReject() {
+    const photo = state.clusterPhotos[state.currentPhotoIndex];
+    if (!photo) return;
+
+    const newValue = !photo.is_rejected;
+    await api.updateReject(photo.id, newValue);
+    photo.is_rejected = newValue;
+
+    // Update cluster representative if this is the rep
+    const cluster = state.clusters[state.currentClusterIndex];
+    if (cluster && cluster.representative.id === photo.id) {
+        cluster.representative.is_rejected = newValue;
+        updateCardInGrid(state.currentClusterIndex);
+    }
+
+    renderModalContent();
+    refreshStats();
+}
+
 async function refreshStats() {
     state.stats = await api.getStats();
     renderStats();
@@ -720,21 +780,6 @@ async function resetAndLoad() {
 function setupEventListeners() {
     // Indexing controls removed - run indexing manually via CLI
 
-    // Database selector
-    elements.databaseSelector.addEventListener('change', async (e) => {
-        const dbName = e.target.value;
-        if (!dbName) return;
-
-        try {
-            await api.switchDatabase(dbName);
-            // Reload everything after switching
-            await init();
-        } catch (err) {
-            console.error('Failed to switch database:', err);
-            alert('Failed to switch database. Please try again.');
-        }
-    });
-
     // Filter changes
     elements.filterFolder.addEventListener('change', (e) => {
         state.folder = e.target.value;
@@ -744,11 +789,31 @@ function setupEventListeners() {
     elements.filterStarred.addEventListener('click', () => {
         state.starredOnly = !state.starredOnly;
         if (state.starredOnly) {
+            state.rejectedOnly = false; // Can't show both
+            elements.filterRejected.classList.remove('text-red-400', 'scale-110', 'rotate-12');
+            elements.filterRejected.classList.add('text-slate-400');
+
             elements.filterStarred.classList.remove('text-slate-400');
             elements.filterStarred.classList.add('text-accent', 'scale-110', 'rotate-12');
         } else {
             elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
             elements.filterStarred.classList.add('text-slate-400');
+        }
+        resetAndLoad();
+    });
+
+    elements.filterRejected.addEventListener('click', () => {
+        state.rejectedOnly = !state.rejectedOnly;
+        if (state.rejectedOnly) {
+            state.starredOnly = false; // Can't show both
+            elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
+            elements.filterStarred.classList.add('text-slate-400');
+
+            elements.filterRejected.classList.remove('text-slate-400');
+            elements.filterRejected.classList.add('text-red-400', 'scale-110', 'rotate-12');
+        } else {
+            elements.filterRejected.classList.remove('text-red-400', 'scale-110', 'rotate-12');
+            elements.filterRejected.classList.add('text-slate-400');
         }
         resetAndLoad();
     });
@@ -777,8 +842,18 @@ function setupEventListeners() {
 
     elements.modal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
 
+    // EXIF toggle
+    elements.modalExifToggle.addEventListener('click', () => {
+        const isHidden = elements.modalExifDetails.classList.contains('hidden');
+        elements.modalExifDetails.classList.toggle('hidden');
+        elements.modalExifArrow.textContent = isHidden ? '▼' : '▶';
+    });
+
     // Star toggle
     elements.modalStarToggle.addEventListener('click', toggleStar);
+
+    // Reject toggle
+    elements.modalRejectToggle.addEventListener('click', toggleReject);
 
     // Infinite scroll - only trigger if initial load has completed
     const observer = new IntersectionObserver((entries) => {
@@ -825,6 +900,13 @@ function handleKeyboard(e) {
             case ' ':  // Spacebar also toggles star
                 e.preventDefault();
                 toggleStar();
+                break;
+            case 'r':
+            case 'R':
+            case 'Delete':
+            case 'Backspace':
+                e.preventDefault();
+                toggleReject();
                 break;
         }
     } else {
@@ -883,6 +965,7 @@ function readURLParams() {
 
     state.folder = params.get('folder') || '';
     state.starredOnly = params.get('starred') === 'true';
+    state.rejectedOnly = params.get('rejected') === 'true';
 
     // Update UI to match state
     elements.filterFolder.value = state.folder;
@@ -893,6 +976,13 @@ function readURLParams() {
         elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
         elements.filterStarred.classList.add('text-slate-400');
     }
+    if (state.rejectedOnly) {
+        elements.filterRejected.classList.remove('text-slate-400');
+        elements.filterRejected.classList.add('text-red-400', 'scale-110', 'rotate-12');
+    } else {
+        elements.filterRejected.classList.remove('text-red-400', 'scale-110', 'rotate-12');
+        elements.filterRejected.classList.add('text-slate-400');
+    }
 }
 
 function updateURL() {
@@ -900,6 +990,7 @@ function updateURL() {
 
     if (state.folder) params.set('folder', state.folder);
     if (state.starredOnly) params.set('starred', 'true');
+    if (state.rejectedOnly) params.set('rejected', 'true');
 
     const newURL = params.toString()
         ? `${window.location.pathname}?${params.toString()}`
@@ -910,9 +1001,6 @@ function updateURL() {
 
 async function init() {
     setupEventListeners();
-
-    // Load available databases
-    await renderDatabases();
 
     // Read filters from URL
     readURLParams();
