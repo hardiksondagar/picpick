@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PicPick Indexer - Scans photos, computes embeddings, detects faces, and clusters similar images.
+PicBest Indexer - Scans photos, computes embeddings, detects faces, and clusters similar images.
 Now with face detection and person-aware clustering.
 """
 
@@ -182,7 +182,7 @@ def scan_photos() -> list[Path]:
     photos = []
 
     for root, dirs, files in os.walk(BASE_DIR):
-        # Skip the script directory itself (picpick/curator folder)
+        # Skip the script directory itself (PicBest/curator folder)
         root_path = Path(root)
         if root_path == SCRIPT_DIR or SCRIPT_DIR in root_path.parents:
             continue
@@ -861,7 +861,7 @@ def main():
     import argparse
     global BASE_DIR
 
-    parser = argparse.ArgumentParser(description='PicPick - Index and cluster photos')
+    parser = argparse.ArgumentParser(description='PicBest - Index and cluster photos')
     parser.add_argument('--base-dir', '-d', type=str, default=None,
                         help=f'Directory containing photos (default: {DEFAULT_PHOTOS_DIR})')
     parser.add_argument('--recluster', action='store_true',
@@ -884,7 +884,7 @@ def main():
     skip_faces = args.no_faces
 
     print("="*50)
-    print("PICPICK - PHOTO INDEXER")
+    print("PicBest - PHOTO INDEXER")
     print("="*50)
     print(f"Base directory: {BASE_DIR}")
     print(f"Database: {DB_PATH}")

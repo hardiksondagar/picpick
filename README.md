@@ -1,6 +1,8 @@
-# 🖼️ PicPick
+# 🖼️ PicBest
 
 **Intelligently filter thousands of photos down to your best shots.**
+
+> **Want something simpler?** Try [PicBest Lite](#-PicBest-lite) - a single HTML file, no installation required!
 
 ---
 
@@ -15,7 +17,7 @@ After any big event – a wedding, vacation, or family gathering – you're left
 
 ## The Solution
 
-PicPick uses **AI-powered clustering** and **face recognition** to organize your photos intelligently:
+PicBest uses **AI-powered clustering** and **face recognition** to organize your photos intelligently:
 
 ### ✨ Key Features
 
@@ -54,8 +56,8 @@ PicPick uses **AI-powered clustering** and **face recognition** to organize your
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/picpick.git
-cd picpick
+git clone https://github.com/yourusername/PicBest.git
+cd PicBest
 
 # Create virtual environment
 python -m venv venv
@@ -132,7 +134,7 @@ python export_starred.py --output /path/to/album/folder
 
 ## 🖼️ Use Cases
 
-| Event | Photos | After PicPick |
+| Event | Photos | After PicBest |
 |-------|--------|---------------|
 | Wedding | 5,000+ | ~300 for album |
 | Vacation | 2,000+ | ~200 highlights |
@@ -192,7 +194,7 @@ python index_photos.py --faces
 ## 📁 Project Structure
 
 ```
-picpick/
+PicBest/
 ├── index_photos.py      # Photo indexing and clustering
 ├── server.py            # FastAPI web server
 ├── export_starred.py    # Export starred photos
@@ -238,6 +240,39 @@ MIT License – Use it for personal projects, weddings, vacations, or commercial
 - [OpenAI CLIP](https://github.com/openai/CLIP) – For incredible image embeddings
 - [face_recognition](https://github.com/ageitgey/face_recognition) – For simple face detection API
 - [FastAPI](https://fastapi.tiangolo.com/) – For the excellent web framework
+
+---
+
+## 🪶 PicBest Lite
+
+Don't need AI clustering or face recognition? Just want to quickly star and export photos?
+
+**PicBest Lite** is a single HTML file – no installation, no server, no dependencies.
+
+### Features
+- 📁 Select any folder from your computer
+- ⭐ Star/unstar photos with click or keyboard
+- 🔍 Search by filename
+- 📤 Export starred photos to a new folder
+- 💾 Starred selections saved in browser
+
+### Usage
+
+1. Open `PicBest-lite.html` in **Chrome or Edge**
+2. Click "Select Photo Folder"
+3. Star your favorites (`S` or `Space`)
+4. Click "Export Starred" to copy them
+
+### Browser Support
+
+| Browser | Supported |
+|---------|-----------|
+| Chrome | ✅ |
+| Edge | ✅ |
+| Firefox | ❌ |
+| Safari | ❌ |
+
+> Uses the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API) which is only available in Chromium browsers.
 
 ---
 

@@ -225,7 +225,7 @@ def print_summary():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='PicPick - Export starred photos')
+    parser = argparse.ArgumentParser(description='PicBest - Export starred photos')
     parser.add_argument('--output', '-o', type=str, help='Output directory or file')
     parser.add_argument('--min-rating', '-r', type=int, default=3, help='Minimum rating (0-5)')
     parser.add_argument('--starred', '-s', action='store_true', help='Export only starred photos')

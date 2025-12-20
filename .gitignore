@@ -9,7 +9,7 @@ env/
 .venv/
 ENV/
 
-# PicPick generated files
+# PicBest generated files
 photos.db
 photos.db-journal
 thumbnails/

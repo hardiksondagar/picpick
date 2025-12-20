@@ -1,5 +1,5 @@
 /**
- * PicPick - Smart Photo Curator - Frontend Application
+ * PicBest - Smart Photo Curator - Frontend Application
  */
 
 // ============================================

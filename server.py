@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PicPick - Smart Photo Curator - Web Server
+PicBest - Smart Photo Curator - Web Server
 FastAPI backend for browsing and rating photos.
 """
 
@@ -29,7 +29,7 @@ THUMB_SIZES = {
     'full': None    # Original size
 }
 
-app = FastAPI(title="PicPick")
+app = FastAPI(title="PicBest")
 
 
 def get_db():
@@ -594,7 +594,7 @@ def serve_index():
 
 if __name__ == "__main__":
     print("="*50)
-    print("PICPICK - SMART PHOTO CURATOR")
+    print("PicBest - SMART PHOTO CURATOR")
     print("="*50)
     print(f"Database: {DB_PATH}")
     print(f"Static files: {STATIC_DIR}")
