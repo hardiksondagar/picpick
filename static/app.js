@@ -229,31 +229,16 @@ function createPhotoCard(cluster, index) {
     card.dataset.photoId = photo.id;
 
     const clusterBadge = cluster.photo_count > 1
-        ? `<div class="absolute top-3 right-3 px-2 py-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 rounded-full text-xs font-semibold text-white">${cluster.photo_count}</div>`
-        : '';
-
-    const starBadge = photo.is_starred
-        ? `<div class="absolute top-3 left-3 w-8 h-8 bg-green-600 border-2 border-green-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
-            </svg>
-           </div>`
-        : '';
-
-    const rejectBadge = photo.is_rejected
-        ? `<div class="absolute top-3 left-3 w-8 h-8 bg-red-600 border-2 border-red-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
-            </svg>
-           </div>`
+        ? `<div class="absolute bottom-3 right-3 px-2 py-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 rounded-full flex items-center gap-1 text-xs font-semibold text-white">
+            <i class="fa-solid fa-layer-group text-sm"></i>
+            <span>${cluster.photo_count}</span>
+        </div>`
         : '';
 
     card.innerHTML = `
         <img src="/api/image/${photo.id}?w=400" alt="${photo.filename}" loading="lazy" class="w-full h-full object-cover">
         <div class="photo-card-overlay absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-transparent opacity-0 transition-opacity duration-200"></div>
         ${clusterBadge}
-        ${starBadge}
-        ${rejectBadge}
         <div class="photo-card-info absolute bottom-0 left-0 right-0 p-4 transform translate-y-full transition-transform duration-200">
             <div class="text-sm font-semibold text-white mb-1 truncate">${photo.filename}</div>
             <div class="text-xs text-slate-400">${photo.folder}</div>
@@ -444,17 +429,13 @@ function renderModalContent() {
     if (photo.is_starred) {
         elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-green-600 border-2 border-green-500 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2';
         elements.modalStarToggle.innerHTML = `
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
-            </svg>
+            <i class="fa-solid fa-thumbs-up text-lg"></i>
             <span>Selected</span>
         `;
     } else {
         elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-green-400 hover:bg-green-600 hover:shadow-glow transition-all flex items-center justify-center gap-2';
         elements.modalStarToggle.innerHTML = `
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
-            </svg>
+            <i class="fa-solid fa-thumbs-up text-lg"></i>
             <span>Select</span>
         `;
     }
@@ -463,17 +444,13 @@ function renderModalContent() {
     if (photo.is_rejected) {
         elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-red-600 border-2 border-red-500 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2';
         elements.modalRejectToggle.innerHTML = `
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
-            </svg>
+            <i class="fa-solid fa-thumbs-down text-lg"></i>
             <span>Rejected</span>
         `;
     } else {
         elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-red-400 hover:bg-red-600 hover:shadow-glow transition-all flex items-center justify-center gap-2';
         elements.modalRejectToggle.innerHTML = `
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
-            </svg>
+            <i class="fa-solid fa-thumbs-down text-lg"></i>
             <span>Reject</span>
         `;
     }
@@ -536,18 +513,14 @@ function renderClusterThumbnails() {
         let badge = '';
         if (photo.is_starred) {
             badge = `
-                <div class="absolute top-1 right-1 w-7 h-7 bg-green-600 border border-green-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
-                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
-                    </svg>
+                <div class="absolute top-1 right-1 bg-black/70 rounded-full w-6 h-6 flex items-center justify-center">
+                    <i class="fa-solid fa-thumbs-up text-emerald-500 text-sm"></i>
                 </div>
             `;
         } else if (photo.is_rejected) {
             badge = `
-                <div class="absolute top-1 right-1 w-7 h-7 bg-red-600 border border-red-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
-                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
-                    </svg>
+                <div class="absolute top-1 right-1 bg-black/70 rounded-full w-6 h-6 flex items-center justify-center">
+                    <i class="fa-solid fa-thumbs-down text-rose-500 text-sm"></i>
                 </div>
             `;
         }
@@ -825,13 +798,13 @@ function setupEventListeners() {
         state.starredOnly = !state.starredOnly;
         if (state.starredOnly) {
             state.rejectedOnly = false; // Can't show both
-            elements.filterRejected.classList.remove('text-red-400', 'bg-red-500/10');
+            elements.filterRejected.classList.remove('text-red-400');
             elements.filterRejected.classList.add('text-slate-400');
 
             elements.filterStarred.classList.remove('text-slate-400');
-            elements.filterStarred.classList.add('text-green-400', 'bg-green-500/10');
+            elements.filterStarred.classList.add('text-green-400');
         } else {
-            elements.filterStarred.classList.remove('text-green-400', 'bg-green-500/10');
+            elements.filterStarred.classList.remove('text-green-400');
             elements.filterStarred.classList.add('text-slate-400');
         }
         resetAndLoad();
@@ -841,13 +814,13 @@ function setupEventListeners() {
         state.rejectedOnly = !state.rejectedOnly;
         if (state.rejectedOnly) {
             state.starredOnly = false; // Can't show both
-            elements.filterStarred.classList.remove('text-green-400', 'bg-green-500/10');
+            elements.filterStarred.classList.remove('text-green-400');
             elements.filterStarred.classList.add('text-slate-400');
 
             elements.filterRejected.classList.remove('text-slate-400');
-            elements.filterRejected.classList.add('text-red-400', 'bg-red-500/10');
+            elements.filterRejected.classList.add('text-red-400');
         } else {
-            elements.filterRejected.classList.remove('text-red-400', 'bg-red-500/10');
+            elements.filterRejected.classList.remove('text-red-400');
             elements.filterRejected.classList.add('text-slate-400');
         }
         resetAndLoad();
@@ -909,9 +882,7 @@ function setupEventListeners() {
                 elements.exportResults.classList.remove('hidden');
                 elements.exportMessage.innerHTML = `
                     <div class="flex items-start gap-3">
-                        <svg class="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                        <i class="fa-solid fa-circle-check text-green-400 text-xl flex-shrink-0 mt-0.5"></i>
                         <div>
                             <p class="font-semibold text-slate-100 mb-1">Export Successful!</p>
                             <p class="text-xs text-slate-400">Downloaded list of ${data.count} starred photos.</p>
@@ -951,9 +922,7 @@ function setupEventListeners() {
                 elements.exportResults.classList.remove('hidden');
                 elements.exportMessage.innerHTML = `
                     <div class="flex items-start gap-3">
-                        <svg class="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
+                        <i class="fa-solid fa-triangle-exclamation text-yellow-400 text-xl flex-shrink-0 mt-0.5"></i>
                         <div>
                             <p class="font-semibold text-slate-100 mb-1">Script Downloaded</p>
                             <p class="text-xs text-slate-400">Downloaded script to delete ${data.count} rejected photos.</p>
@@ -1038,8 +1007,6 @@ function handleKeyboard(e) {
                 e.preventDefault();
                 toggleStar();
                 break;
-            case 'r':
-            case 'R':
             case 'Delete':
             case 'Backspace':
                 e.preventDefault();
@@ -1101,23 +1068,23 @@ function readURLParams() {
     const params = new URLSearchParams(window.location.search);
 
     state.folder = params.get('folder') || '';
-    state.starredOnly = params.get('starred') === 'true';
+    state.starredOnly = params.get('selected') === 'true';
     state.rejectedOnly = params.get('rejected') === 'true';
 
     // Update UI to match state
     elements.filterFolder.value = state.folder;
     if (state.starredOnly) {
         elements.filterStarred.classList.remove('text-slate-400');
-        elements.filterStarred.classList.add('text-accent', 'scale-110', 'rotate-12');
+        elements.filterStarred.classList.add('text-green-400');
     } else {
-        elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
+        elements.filterStarred.classList.remove('text-green-400');
         elements.filterStarred.classList.add('text-slate-400');
     }
     if (state.rejectedOnly) {
         elements.filterRejected.classList.remove('text-slate-400');
-        elements.filterRejected.classList.add('text-red-400', 'scale-110', 'rotate-12');
+        elements.filterRejected.classList.add('text-red-400');
     } else {
-        elements.filterRejected.classList.remove('text-red-400', 'scale-110', 'rotate-12');
+        elements.filterRejected.classList.remove('text-red-400');
         elements.filterRejected.classList.add('text-slate-400');
     }
 }
@@ -1126,7 +1093,7 @@ function updateURL() {
     const params = new URLSearchParams();
 
     if (state.folder) params.set('folder', state.folder);
-    if (state.starredOnly) params.set('starred', 'true');
+    if (state.starredOnly) params.set('selected', 'true');
     if (state.rejectedOnly) params.set('rejected', 'true');
 
     const newURL = params.toString()
