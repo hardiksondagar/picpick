@@ -4,108 +4,322 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PicBest - Smart Photo Curator</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            DEFAULT: '#8b5cf6',
+                            dark: '#7c3aed',
+                            light: '#a78bfa',
+                        },
+                        accent: {
+                            DEFAULT: '#f472b6',
+                            light: '#f9a8d4',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        display: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.3s ease-out',
+                        'slide-up': 'slideUp 0.4s ease-out',
+                        'scale-in': 'scaleIn 0.3s ease-out',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style type="text/tailwindcss">
+        @layer base {
+            /* Removed global border - apply borders explicitly where needed */
+        }
+        @layer utilities {
+            .bg-glass {
+                background: rgba(15, 23, 42, 0.7);
+                backdrop-filter: blur(20px) saturate(180%);
+                -webkit-backdrop-filter: blur(20px) saturate(180%);
+            }
+            .bg-glass-strong {
+                background: rgba(15, 23, 42, 0.85);
+                backdrop-filter: blur(24px) saturate(180%);
+                -webkit-backdrop-filter: blur(24px) saturate(180%);
+            }
+            .bg-gradient-primary {
+                background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f472b6 100%);
+            }
+            .bg-gradient-subtle {
+                background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(236, 72, 153, 0.1) 100%);
+            }
+            .text-gradient {
+                background: linear-gradient(135deg, #a78bfa 0%, #f472b6 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }
+            .shadow-glow {
+                box-shadow: 0 0 20px rgba(139, 92, 246, 0.3), 0 0 40px rgba(139, 92, 246, 0.1);
+            }
+            .shadow-glow-accent {
+                box-shadow: 0 0 20px rgba(244, 114, 182, 0.3), 0 0 40px rgba(244, 114, 182, 0.1);
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+            @keyframes slideUp {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            @keyframes scaleIn {
+                from { opacity: 0; transform: scale(0.95); }
+                to { opacity: 1; transform: scale(1); }
+            }
+            @keyframes starPulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.15); opacity: 0.9; }
+            }
+            .animate-star-pulse {
+                animation: starPulse 2s ease-in-out infinite;
+            }
+            .photo-card {
+                @apply relative overflow-hidden rounded-2xl bg-slate-800/50 border border-slate-700/50 transition-all duration-300;
+            }
+            .photo-card:hover {
+                @apply border-primary/50 shadow-glow transform scale-[1.02];
+            }
+            .photo-card::before {
+                content: '';
+                @apply absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity duration-300;
+            }
+            .photo-card:hover::before {
+                @apply opacity-100;
+            }
+            .filter-active {
+                @apply text-primary-light;
+            }
+            .filter-active::after {
+                content: '';
+                @apply absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-primary rounded-full;
+            }
+            kbd {
+                font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+            }
+        }
+    </style>
 </head>
-<body>
-    <div class="app">
+<body class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100 font-sans antialiased">
+    <div class="min-h-screen flex flex-col">
         <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <h1 class="logo">PicBest</h1>
-                <div class="stats" id="stats">
-                    <span class="stat"><span id="stat-total">0</span> photos</span>
-                    <span class="stat"><span id="stat-clusters">0</span> clusters</span>
-                    <span class="stat starred"><span id="stat-starred">0</span> ★ starred</span>
-                </div>
-            </div>
-            <div class="header-right">
-                <div class="filters">
-                    <select id="filter-folder" class="filter-select">
-                        <option value="">All Folders</option>
-                    </select>
-                    <div class="person-picker" id="person-picker">
-                        <button class="person-picker-btn" id="person-picker-btn">
-                            <span class="person-picker-label">All People</span>
-                            <span class="person-picker-arrow">▼</span>
-                        </button>
-                        <div class="person-picker-dropdown" id="person-picker-dropdown">
-                            <div class="person-option selected" data-person-id="" data-face-id="" data-name="All People">
-                                <span class="person-name">All People</span>
+        <header class="sticky top-0 z-50 bg-glass-strong border-b border-slate-700/30 backdrop-blur-xl">
+            <div class="px-6 lg:px-10 py-5">
+                <div class="flex items-center justify-between gap-6 flex-wrap">
+                    <div class="flex items-center gap-4 flex-1 min-w-0">
+                        <h1 class="text-3xl lg:text-4xl font-bold text-gradient tracking-tight">PicBest</h1>
+                        <select id="database-selector" class="h-10 px-4 bg-slate-800/60 border border-slate-700/50 rounded-xl text-slate-200 text-sm font-medium cursor-pointer transition-all hover:border-primary/50 hover:bg-slate-800/80 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary">
+                            <option value="">Loading...</option>
+                        </select>
+                        <div class="hidden md:flex items-center gap-3 text-sm">
+                            <div class="flex items-center gap-2 h-10 px-3 bg-slate-800/40 rounded-lg border border-slate-700/30">
+                                <span class="text-slate-400">Photos</span>
+                                <span id="stat-total" class="text-slate-100 font-semibold">0</span>
                             </div>
-                            <!-- Person options loaded dynamically -->
+                            <div class="flex items-center gap-2 h-10 px-3 bg-slate-800/40 rounded-lg border border-slate-700/30">
+                                <span class="text-slate-400">Clusters</span>
+                                <span id="stat-clusters" class="text-slate-100 font-semibold">0</span>
+                            </div>
+                            <div class="flex items-center gap-2 h-10 px-3 bg-gradient-subtle rounded-lg border border-accent/30">
+                                <span class="text-accent-light">★</span>
+                                <span id="stat-starred" class="text-accent-light font-semibold">0</span>
+                            </div>
                         </div>
                     </div>
-                    <button id="filter-starred" class="filter-btn" title="Show starred only">★</button>
-                </div>
-                <div class="keyboard-hint">
-                    <span>←→ clusters</span>
-                    <span>↑↓ photos</span>
-                    <span>S/Space star</span>
+
+                    <div class="flex items-center gap-3">
+                        <!-- Filter Group -->
+                        <div class="flex items-center gap-2.5 h-10 bg-slate-800/30 backdrop-blur-sm px-3 rounded-2xl border border-slate-700/30">
+                            <div class="relative group h-full flex items-center">
+                                <select id="filter-folder" class="appearance-none h-full px-4 pr-8 bg-transparent border-0 text-slate-200 text-sm font-semibold cursor-pointer transition-all hover:text-primary-light focus:outline-none focus:ring-0">
+                                    <option value="">📁 All Folders</option>
+                                </select>
+                                <div class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                                    <span class="text-xs text-slate-500">▼</span>
+                                </div>
+                            </div>
+
+                            <div class="w-px h-6 bg-slate-700/50"></div>
+
+                            <button id="filter-starred" class="h-10 w-10 flex items-center justify-center bg-transparent border-0 text-slate-400 text-xl cursor-pointer transition-all hover:text-accent hover:scale-110 hover:rotate-12" title="Show starred only">
+                                <span class="block">★</span>
+                            </button>
+                        </div>
+
+                        <!-- Help Button with Keyboard Shortcuts Tooltip -->
+                        <div class="relative group">
+                            <button id="help-btn" class="h-10 w-10 flex items-center justify-center bg-slate-800/30 backdrop-blur-sm rounded-xl border border-slate-700/30 text-slate-400 hover:text-primary-light hover:border-primary/50 transition-all" title="Keyboard shortcuts">
+                                <span class="text-lg">?</span>
+                            </button>
+                            <div id="help-tooltip" class="hidden absolute top-full right-0 mt-2 w-64 bg-slate-800/98 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl p-4 z-50 animate-fade-in">
+                                <div class="text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wider">Keyboard Shortcuts</div>
+                                <div class="space-y-2.5">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-xs text-slate-400">Navigate clusters</span>
+                                        <div class="flex items-center gap-1">
+                                            <kbd class="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] font-mono text-slate-300 border border-slate-600/50">←</kbd>
+                                            <kbd class="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] font-mono text-slate-300 border border-slate-600/50">→</kbd>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-xs text-slate-400">Navigate photos</span>
+                                        <div class="flex items-center gap-1">
+                                            <kbd class="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] font-mono text-slate-300 border border-slate-600/50">↑</kbd>
+                                            <kbd class="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] font-mono text-slate-300 border border-slate-600/50">↓</kbd>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-xs text-slate-400">Star photo</span>
+                                        <div class="flex items-center gap-1">
+                                            <kbd class="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] font-mono text-slate-300 border border-slate-600/50">S</kbd>
+                                            <span class="text-[10px] text-slate-500">/</span>
+                                            <kbd class="px-1.5 py-0.5 bg-slate-700/50 rounded text-[10px] font-mono text-slate-300 border border-slate-600/50">Space</kbd>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </header>
 
         <!-- Progress Bar -->
-        <div class="progress-container">
-            <div class="progress-bar" id="progress-bar"></div>
-            <div class="progress-text" id="progress-text">0% rated</div>
+        <div class="relative h-1.5 bg-slate-900/50">
+            <div id="progress-bar" class="h-full bg-gradient-primary transition-all duration-500 ease-out shadow-glow" style="width: 0%"></div>
+            <div id="progress-text" class="absolute right-8 top-3 text-xs text-slate-400 font-semibold">0% rated</div>
         </div>
 
-        <!-- Main Grid -->
-        <main class="main">
-            <div class="grid" id="photo-grid">
+        <!-- Indexing Progress Banner -->
+        <div id="indexing-banner" class="hidden bg-gradient-primary px-8 lg:px-10 py-5 shadow-glow-accent animate-slide-up">
+            <div class="flex items-center gap-6 flex-wrap">
+                <div class="flex-1 space-y-2 min-w-0">
+                    <div id="indexing-phase" class="text-white font-bold text-lg">Indexing...</div>
+                    <div id="indexing-progress" class="text-white/95 text-sm font-semibold">0 / 0 (0%)</div>
+                    <div id="indexing-message" class="text-white/80 text-xs font-medium"></div>
+                </div>
+                <div class="flex-[2] min-w-[200px] h-3 bg-white/20 rounded-full overflow-hidden shadow-inner">
+                    <div id="indexing-progress-bar" class="h-full bg-white rounded-full shadow-lg transition-all duration-500 ease-out" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="flex-1 p-6 lg:p-10">
+            <!-- Empty State -->
+            <div id="empty-state" class="hidden flex flex-col items-center justify-center text-center py-24 px-4">
+                <div class="mb-8 w-24 h-24 rounded-full bg-gradient-primary flex items-center justify-center shadow-glow">
+                    <span class="text-4xl">📸</span>
+                </div>
+                <h2 class="text-4xl lg:text-5xl font-bold text-gradient mb-4 tracking-tight">No Photos Indexed Yet</h2>
+                <p class="text-slate-400 text-lg mb-8 max-w-md">Run indexing manually via CLI:</p>
+                <code class="px-6 py-3.5 bg-slate-800/60 border border-slate-700/50 rounded-xl text-slate-200 font-mono text-sm shadow-lg">python index_photos.py --base-dir /path/to/photos</code>
+            </div>
+
+            <!-- Photo Grid -->
+            <div id="photo-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3 lg:gap-4 max-w-[2000px] mx-auto">
                 <!-- Photos loaded dynamically -->
             </div>
 
-            <!-- Loading indicator -->
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Loading photos...</p>
+            <!-- Loading -->
+            <div id="loading" class="hidden text-center py-12">
+                <div class="inline-block w-12 h-12 border-4 border-slate-800 border-t-primary rounded-full animate-spin mb-4 shadow-glow"></div>
+                <p class="text-slate-400 font-medium">Loading photos...</p>
             </div>
 
-            <!-- Load more trigger -->
+            <!-- Load More Trigger -->
             <div id="load-more-trigger"></div>
         </main>
 
         <!-- Photo Modal -->
-        <div class="modal" id="photo-modal">
-            <div class="modal-backdrop"></div>
-            <div class="modal-content">
-                <button class="modal-close" id="modal-close">×</button>
-                <button class="modal-nav modal-prev" id="modal-prev">‹</button>
-                <button class="modal-nav modal-next" id="modal-next">›</button>
+        <div id="photo-modal" class="hidden fixed inset-0 z-[9999] items-center justify-center p-4 lg:p-6 animate-fade-in">
+            <div class="modal-backdrop absolute inset-0 bg-slate-950/95 backdrop-blur-md"></div>
+            <div class="modal-content relative bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl max-w-[95vw] max-h-[95vh] flex flex-col lg:flex-row overflow-hidden border border-slate-700/50 animate-scale-in">
+                <button id="modal-close" class="absolute top-4 right-4 lg:top-6 lg:right-6 z-20 w-10 h-10 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-2xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">×</button>
+                <button id="modal-prev" class="absolute left-4 lg:left-6 top-1/2 -translate-y-1/2 z-20 w-12 h-12 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-3xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">‹</button>
+                <button id="modal-next" class="absolute right-4 lg:right-6 top-1/2 -translate-y-1/2 z-20 w-12 h-12 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-3xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">›</button>
 
-                <div class="modal-image-container">
-                    <img id="modal-image" src="" alt="">
+                <div class="flex-1 flex items-center justify-center bg-slate-900/50 p-6 lg:p-10 min-h-[50vh] lg:min-h-0">
+                    <img id="modal-image" src="" alt="" class="max-w-full max-h-full object-contain rounded-2xl shadow-2xl">
                 </div>
 
-                <div class="modal-sidebar">
-                    <div class="modal-info">
-                        <h3 id="modal-filename">filename.jpg</h3>
-                        <p id="modal-folder" class="modal-meta">Folder</p>
-                        <p id="modal-datetime" class="modal-meta">Date & Time</p>
-                        <p id="modal-dimensions" class="modal-meta">Dimensions</p>
-                        <p id="modal-cluster" class="modal-meta">Cluster info</p>
+                <div class="w-full lg:w-[420px] p-6 lg:p-8 bg-slate-800/95 backdrop-blur-xl overflow-y-auto space-y-6 border-t lg:border-t-0 lg:border-l border-slate-700/50">
+                    <div class="space-y-3">
+                        <h3 id="modal-filename" class="text-xl font-bold text-slate-100 mb-4 break-words">filename.jpg</h3>
+                        <div class="space-y-2.5">
+                            <p id="modal-folder" class="text-sm text-slate-400 flex items-center gap-2">
+                                <span class="text-lg">📁</span>
+                                <span>Folder</span>
+                            </p>
+                            <p id="modal-datetime" class="text-sm text-slate-400 flex items-center gap-2">
+                                <span class="text-lg">📅</span>
+                                <span>Date & Time</span>
+                            </p>
+                            <p id="modal-dimensions" class="text-sm text-slate-400 flex items-center gap-2">
+                                <span class="text-lg">📐</span>
+                                <span>Dimensions</span>
+                            </p>
+                            <p id="modal-cluster" class="text-sm text-slate-400 flex items-center gap-2">
+                                <span class="text-lg">📷</span>
+                                <span>Cluster info</span>
+                            </p>
+                        </div>
                     </div>
 
-                    <div class="modal-rating">
-                        <button class="star-toggle" id="modal-star-toggle">☆ Star</button>
-                    </div>
+                    <button id="modal-star-toggle" class="w-full px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-accent hover:bg-gradient-primary hover:shadow-glow transition-all">☆ Star</button>
 
-                    <!-- Cluster photos -->
-                    <div class="cluster-photos" id="cluster-photos">
-                        <h4>Similar Photos (<span id="cluster-count">0</span>)</h4>
-                        <div class="cluster-grid" id="cluster-grid"></div>
+                    <div>
+                        <h4 class="text-base font-bold text-slate-300 mb-4">Similar Photos (<span id="cluster-count" class="text-primary-light">0</span>)</h4>
+                        <div id="cluster-grid" class="grid grid-cols-3 gap-2.5">
+                            <!-- Cluster photos loaded dynamically -->
+                        </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Directory Browser Modal -->
+        <div id="directory-browser-modal" class="hidden fixed inset-0 z-[9999] items-center justify-center p-4 lg:p-6 animate-fade-in">
+            <div class="modal-backdrop absolute inset-0 bg-slate-950/95 backdrop-blur-md"></div>
+            <div class="directory-browser-content relative bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-slate-700/50 max-w-3xl w-full max-h-[85vh] p-6 lg:p-8 flex flex-col animate-scale-in">
+                <button id="dir-modal-close" class="absolute top-4 right-4 lg:top-6 lg:right-6 w-10 h-10 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-2xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">×</button>
+
+                <h2 class="text-3xl lg:text-4xl font-bold text-gradient mb-6 tracking-tight">Select Photo Directory</h2>
+
+                <div id="dir-breadcrumb" class="px-4 py-3 bg-slate-900/60 border border-slate-700/50 rounded-xl text-sm text-slate-400 mb-5 font-mono break-all backdrop-blur"></div>
+
+                <div class="flex-1 overflow-y-auto border border-slate-700/50 rounded-2xl mb-6 max-h-96 bg-slate-900/50 backdrop-blur shadow-inner">
+                    <div id="directory-list" class="p-3 space-y-1.5">
+                        <!-- Folders loaded dynamically -->
+                    </div>
+                </div>
+
+                <div class="flex gap-3 justify-end flex-wrap">
+                    <button id="dir-cancel-btn" class="px-6 py-3 bg-slate-700/50 border border-slate-600/50 text-slate-100 rounded-xl font-semibold hover:bg-slate-700 hover:border-slate-600 transition-all">Cancel</button>
+                    <button id="select-directory-btn" class="px-6 py-3.5 bg-gradient-primary text-white rounded-xl font-bold shadow-glow hover:shadow-glow-accent hover:-translate-y-0.5 transition-all">📸 Index This Directory</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=5"></script>
 </body>
 </html>
-

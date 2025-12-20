@@ -18,7 +18,6 @@ const state = {
 
     // Filters
     folder: '',
-    personId: null,
     starredOnly: false,
 
     // Modal
@@ -31,7 +30,15 @@ const state = {
     selectedIndex: -1,
 
     // Stats
-    stats: {}
+    stats: {},
+
+    // Directory browser
+    currentDirectory: null,
+
+    // Indexing
+    indexingActive: false,
+    indexingPollInterval: null,
+    lastSeenPhotoCount: 0
 };
 
 // ============================================
@@ -39,6 +46,23 @@ const state = {
 // ============================================
 
 const api = {
+    async getDatabases() {
+        const res = await fetch('/api/databases');
+        return res.json();
+    },
+
+    async switchDatabase(dbName) {
+        const res = await fetch(`/api/databases/switch?db_name=${encodeURIComponent(dbName)}`, {
+            method: 'POST'
+        });
+        return res.json();
+    },
+
+    async getIndexingStatus() {
+        const res = await fetch('/api/index/status');
+        return res.json();
+    },
+
     async getStats() {
         const res = await fetch('/api/stats');
         return res.json();
@@ -48,7 +72,6 @@ const api = {
         const params = new URLSearchParams({ page, per_page: state.perPage });
 
         if (state.folder) params.set('folder', state.folder);
-        if (state.personId) params.set('person_id', state.personId.toString());
         if (state.starredOnly) params.set('starred_only', 'true');
 
         const res = await fetch(`/api/clusters?${params}`);
@@ -97,6 +120,28 @@ const elements = {
     loading: document.getElementById('loading'),
     loadMoreTrigger: document.getElementById('load-more-trigger'),
 
+    // Database selector
+    databaseSelector: document.getElementById('database-selector'),
+
+    // Empty state
+    emptyState: document.getElementById('empty-state'),
+    browsePhotosBtn: document.getElementById('browse-photos-btn'),
+
+    // Indexing banner
+    indexingBanner: document.getElementById('indexing-banner'),
+    indexingPhase: document.getElementById('indexing-phase'),
+    indexingProgress: document.getElementById('indexing-progress'),
+    indexingMessage: document.getElementById('indexing-message'),
+    indexingProgressBar: document.getElementById('indexing-progress-bar'),
+
+    // Directory browser
+    directoryModal: document.getElementById('directory-browser-modal'),
+    dirModalClose: document.getElementById('dir-modal-close'),
+    dirBreadcrumb: document.getElementById('dir-breadcrumb'),
+    directoryList: document.getElementById('directory-list'),
+    selectDirectoryBtn: document.getElementById('select-directory-btn'),
+    dirCancelBtn: document.getElementById('dir-cancel-btn'),
+
     // Stats
     statTotal: document.getElementById('stat-total'),
     statClusters: document.getElementById('stat-clusters'),
@@ -106,10 +151,9 @@ const elements = {
 
     // Filters
     filterFolder: document.getElementById('filter-folder'),
-    personPicker: document.getElementById('person-picker'),
-    personPickerBtn: document.getElementById('person-picker-btn'),
-    personPickerDropdown: document.getElementById('person-picker-dropdown'),
     filterStarred: document.getElementById('filter-starred'),
+    helpBtn: document.getElementById('help-btn'),
+    helpTooltip: document.getElementById('help-tooltip'),
 
     // Modal
     modal: document.getElementById('photo-modal'),
@@ -130,6 +174,29 @@ const elements = {
 // ============================================
 // Rendering Functions
 // ============================================
+
+async function renderDatabases() {
+    try {
+        const data = await api.getDatabases();
+        const dbs = data.databases;
+
+        elements.databaseSelector.innerHTML = '';
+
+        dbs.forEach(db => {
+            const option = document.createElement('option');
+            option.value = db.name;
+            const sizeMB = (db.size / (1024 * 1024)).toFixed(1);
+            option.textContent = `${db.name} (${sizeMB} MB)`;
+            if (db.active) {
+                option.selected = true;
+            }
+            elements.databaseSelector.appendChild(option);
+        });
+    } catch (err) {
+        console.error('Failed to load databases:', err);
+        elements.databaseSelector.innerHTML = '<option>photos</option>';
+    }
+}
 
 function renderStats() {
     const { stats } = state;
@@ -155,41 +222,32 @@ function renderStats() {
         });
     }
 
-    // Populate person picker - limit to top 100 and use lazy loading
-    if (stats.persons && elements.personPickerDropdown.children.length <= 1) {
-        const topPersons = stats.persons.slice(0, 100); // Limit to top 100 by photo count
-        topPersons.forEach(p => {
-            const opt = document.createElement('div');
-            opt.className = 'person-option';
-            opt.dataset.personId = p.id;
-            opt.dataset.faceId = p.thumbnail_face_id || '';
-            opt.dataset.name = p.name;
-            // Use data-src for lazy loading - load when dropdown opens
-            const faceImg = p.thumbnail_face_id
-                ? `<img class="person-face" data-src="/api/face/${p.thumbnail_face_id}?size=72" alt="" loading="lazy">`
-                : '<span class="person-face" style="background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;">👤</span>';
-            opt.innerHTML = `${faceImg}<span class="person-name">${p.name}</span><span class="person-count">${p.count}</span>`;
-            elements.personPickerDropdown.appendChild(opt);
-        });
-    }
 }
 
 function createPhotoCard(cluster, index) {
     const photo = cluster.representative;
     const card = document.createElement('div');
-    card.className = 'photo-card';
+    card.className = 'photo-card relative aspect-square rounded-xl overflow-hidden cursor-pointer transition-all duration-200 bg-slate-800 shadow-lg hover:shadow-2xl hover:shadow-primary/20 hover:-translate-y-1 hover:scale-[1.02]';
     card.dataset.index = index;
     card.dataset.clusterId = cluster.cluster_id;
     card.dataset.photoId = photo.id;
 
+    const clusterBadge = cluster.photo_count > 1
+        ? `<div class="absolute top-3 right-3 px-2 py-1 bg-slate-900/80 backdrop-blur-sm border border-slate-700 rounded-full text-xs font-semibold text-white">${cluster.photo_count}</div>`
+        : '';
+
+    const starBadge = photo.is_starred
+        ? '<div class="absolute top-3 left-3 text-2xl filter drop-shadow-lg animate-star-pulse">★</div>'
+        : '';
+
     card.innerHTML = `
-        <img src="/api/image/${photo.id}?w=400" alt="${photo.filename}" loading="lazy">
-        <div class="photo-card-overlay"></div>
-        <div class="photo-card-cluster ${cluster.photo_count === 1 ? 'single' : ''}">${cluster.photo_count}</div>
-        ${photo.is_starred ? '<div class="photo-card-star">★</div>' : ''}
-        <div class="photo-card-info">
-            <div class="photo-card-name">${photo.filename}</div>
-            <div class="photo-card-meta">${photo.folder}</div>
+        <img src="/api/image/${photo.id}?w=400" alt="${photo.filename}" loading="lazy" class="w-full h-full object-cover">
+        <div class="photo-card-overlay absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-transparent opacity-0 transition-opacity duration-200"></div>
+        ${clusterBadge}
+        ${starBadge}
+        <div class="photo-card-info absolute bottom-0 left-0 right-0 p-4 transform translate-y-full transition-transform duration-200">
+            <div class="text-sm font-semibold text-white mb-1 truncate">${photo.filename}</div>
+            <div class="text-xs text-slate-400">${photo.folder}</div>
         </div>
     `;
 
@@ -221,8 +279,8 @@ function renderGrid(append = false) {
         // Insert date separator if date changed
         if (photoDate !== state.lastRenderedDate) {
             const dateSeparator = document.createElement('div');
-            dateSeparator.className = 'date-separator';
-            dateSeparator.innerHTML = `<span class="date-separator-text">${photoDate}</span>`;
+            dateSeparator.className = 'col-span-full text-center my-4';
+            dateSeparator.innerHTML = `<span class="inline-block px-6 py-2 bg-gradient-primary text-white font-semibold text-sm rounded-full !border-0 !outline-none !ring-0 shadow-lg">${photoDate}</span>`;
             elements.grid.appendChild(dateSeparator);
             state.lastRenderedDate = photoDate;
             state.lastRenderedTime = photoTimestamp; // Reset time tracking for new date
@@ -237,8 +295,8 @@ function renderGrid(append = false) {
                     hour12: true
                 });
                 const timeSeparator = document.createElement('div');
-                timeSeparator.className = 'time-separator';
-                timeSeparator.innerHTML = `<span class="time-separator-text">⏱ ${timeStr}</span>`;
+                timeSeparator.className = 'col-span-full text-center my-4';
+                timeSeparator.innerHTML = `<span class="inline-block px-6 py-2 bg-slate-800 border border-slate-700 text-slate-400 font-semibold text-xs rounded-full">⏱ ${timeStr}</span>`;
                 elements.grid.appendChild(timeSeparator);
             }
         }
@@ -280,16 +338,21 @@ function updateCardInGrid(clusterIndex) {
 }
 
 function updateSelection() {
+    // Get all photo cards (excluding date separators)
+    const photoCards = Array.from(elements.grid.querySelectorAll('.photo-card'));
+
     // Remove previous selection
-    document.querySelectorAll('.photo-card.selected').forEach(el => {
-        el.classList.remove('selected');
+    photoCards.forEach(el => {
+        el.classList.remove('ring-4', 'ring-primary');
     });
 
-    // Add new selection
-    if (state.selectedIndex >= 0 && state.selectedIndex < elements.grid.children.length) {
-        const card = elements.grid.children[state.selectedIndex];
-        card.classList.add('selected');
-        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Add new selection - only target photo cards, not date separators
+    if (state.selectedIndex >= 0 && state.selectedIndex < photoCards.length) {
+        const card = photoCards[state.selectedIndex];
+        if (card && card.classList.contains('photo-card')) {
+            card.classList.add('ring-4', 'ring-primary');
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
     }
 }
 
@@ -311,7 +374,8 @@ async function openModal(clusterIndex) {
     state.currentPhotoIndex = 0;
 
     state.modalOpen = true;
-    elements.modal.classList.add('open');
+    elements.modal.classList.remove('hidden');
+    elements.modal.classList.add('flex');
     document.body.style.overflow = 'hidden';
 
     renderModalContent();
@@ -320,7 +384,8 @@ async function openModal(clusterIndex) {
 
 function closeModal() {
     state.modalOpen = false;
-    elements.modal.classList.remove('open');
+    elements.modal.classList.add('hidden');
+    elements.modal.classList.remove('flex');
     document.body.style.overflow = '';
 }
 
@@ -341,8 +406,13 @@ function renderModalContent() {
     elements.modalCluster.textContent = `📷 Photo ${state.currentPhotoIndex + 1} of ${state.clusterPhotos.length} in cluster`;
 
     // Star toggle
-    elements.modalStarToggle.classList.toggle('active', photo.is_starred);
-    elements.modalStarToggle.textContent = photo.is_starred ? '★ Starred' : '☆ Star';
+    if (photo.is_starred) {
+        elements.modalStarToggle.className = 'w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-amber-400 rounded-xl text-white font-semibold transition-all';
+        elements.modalStarToggle.textContent = '★ Starred';
+    } else {
+        elements.modalStarToggle.className = 'w-full px-4 py-3 bg-slate-700 border-2 border-slate-600 rounded-xl text-slate-100 font-semibold hover:border-amber-400 transition-all';
+        elements.modalStarToggle.textContent = '☆ Star';
+    }
 
     // Update cluster thumbnail selection
     updateClusterThumbnailSelection();
@@ -354,26 +424,49 @@ function renderClusterThumbnails() {
 
     state.clusterPhotos.forEach((photo, i) => {
         const thumb = document.createElement('div');
-        thumb.className = `cluster-thumb ${i === state.currentPhotoIndex ? 'current' : ''}`;
+        const isCurrentClasses = i === state.currentPhotoIndex ? 'ring-2 ring-primary' : '';
+        thumb.className = `relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 border-2 border-transparent hover:border-primary hover:scale-105 ${isCurrentClasses}`;
         thumb.dataset.index = i;
+        thumb.dataset.photoId = photo.id;
+
+        const starClasses = photo.is_starred
+            ? 'bg-amber-400 text-white scale-110'
+            : 'bg-slate-900/80 backdrop-blur-sm text-slate-400 hover:bg-amber-400 hover:text-white hover:scale-110';
 
         thumb.innerHTML = `
-            <img src="/api/image/${photo.id}?w=400" alt="" loading="lazy">
-            <button class="thumb-star-btn ${photo.is_starred ? 'starred' : ''}" data-photo-index="${i}">★</button>
+            <img src="/api/image/${photo.id}?w=400" alt="" loading="lazy" class="w-full h-full object-cover">
+            <button class="thumb-star-btn absolute top-1 right-1 w-6 h-6 rounded-full border-none flex items-center justify-center text-sm cursor-pointer transition-all ${starClasses}" data-photo-id="${photo.id}">★</button>
         `;
 
-        // Click image to select
+        // Click image to select - use dataset.index or photo ID to ensure correct photo
         thumb.addEventListener('click', (e) => {
-            if (!e.target.classList.contains('thumb-star-btn')) {
-                state.currentPhotoIndex = i;
-                renderModalContent();
+            if (!e.target.closest('.thumb-star-btn')) {
+                const clickedIndex = parseInt(thumb.dataset.index);
+                const photoId = parseInt(thumb.dataset.photoId);
+
+                // Verify index is valid, or find by photo ID as fallback
+                let targetIndex = clickedIndex;
+                if (clickedIndex < 0 || clickedIndex >= state.clusterPhotos.length ||
+                    state.clusterPhotos[clickedIndex]?.id !== photoId) {
+                    // Index mismatch, find by photo ID
+                    targetIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
+                }
+
+                if (targetIndex >= 0 && targetIndex < state.clusterPhotos.length) {
+                    state.currentPhotoIndex = targetIndex;
+                    renderModalContent();
+                }
             }
         });
 
-        // Click star to toggle
+        // Click star to toggle - use photo ID to find correct index
         thumb.querySelector('.thumb-star-btn').addEventListener('click', async (e) => {
             e.stopPropagation();
-            await toggleClusterPhotoStar(i);
+            const photoId = parseInt(e.target.dataset.photoId);
+            const photoIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
+            if (photoIndex >= 0) {
+                await toggleClusterPhotoStar(photoIndex);
+            }
         });
 
         elements.clusterGrid.appendChild(thumb);
@@ -384,21 +477,31 @@ function renderClusterThumbnails() {
 }
 
 function updateClusterThumbnailSelection() {
-    const thumbs = elements.clusterGrid.querySelectorAll('.cluster-thumb');
+    const thumbs = elements.clusterGrid.querySelectorAll('[data-index]');
     thumbs.forEach((thumb, i) => {
-        thumb.classList.toggle('current', i === state.currentPhotoIndex);
-        // Update star state
+        // Update ring state
+        if (i === state.currentPhotoIndex) {
+            thumb.classList.add('ring-2', 'ring-primary');
+        } else {
+            thumb.classList.remove('ring-2', 'ring-primary');
+        }
+
+        // Update star button state
         const photo = state.clusterPhotos[i];
         const btn = thumb.querySelector('.thumb-star-btn');
         if (btn && photo) {
-            btn.classList.toggle('starred', photo.is_starred);
+            if (photo.is_starred) {
+                btn.className = 'thumb-star-btn absolute top-1 right-1 w-6 h-6 rounded-full border-none flex items-center justify-center text-sm cursor-pointer transition-all bg-amber-400 text-white scale-110';
+            } else {
+                btn.className = 'thumb-star-btn absolute top-1 right-1 w-6 h-6 rounded-full border-none flex items-center justify-center text-sm cursor-pointer transition-all bg-slate-900/80 backdrop-blur-sm text-slate-400 hover:bg-amber-400 hover:text-white hover:scale-110';
+            }
         }
     });
     scrollToSelectedThumb();
 }
 
 function scrollToSelectedThumb() {
-    const selected = elements.clusterGrid.querySelector('.cluster-thumb.current');
+    const selected = elements.clusterGrid.querySelector('.ring-primary');
     if (selected) {
         selected.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -428,8 +531,13 @@ async function toggleClusterPhotoStar(photoIndex) {
 
     // Update main star toggle if this is selected photo
     if (photoIndex === state.currentPhotoIndex) {
-        elements.modalStarToggle.classList.toggle('active', newValue);
-        elements.modalStarToggle.textContent = newValue ? '★ Starred' : '☆ Star';
+        if (newValue) {
+            elements.modalStarToggle.className = 'w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-amber-400 rounded-xl text-white font-semibold transition-all';
+            elements.modalStarToggle.textContent = '★ Starred';
+        } else {
+            elements.modalStarToggle.className = 'w-full px-4 py-3 bg-slate-700 border-2 border-slate-600 rounded-xl text-slate-100 font-semibold hover:border-amber-400 transition-all';
+            elements.modalStarToggle.textContent = '☆ Star';
+        }
     }
 
     refreshStats();
@@ -491,6 +599,78 @@ async function refreshStats() {
     renderStats();
 }
 
+// Directory browser removed - run indexing manually via CLI
+
+// ============================================
+// Indexing Progress Functions
+// ============================================
+
+function startIndexingProgressPoll() {
+    state.indexingActive = true;
+    elements.indexingBanner.classList.remove('hidden');
+    elements.emptyState.classList.add('hidden');
+
+    pollIndexingStatus();
+}
+
+async function pollIndexingStatus() {
+    if (!state.indexingActive) return;
+
+    try {
+        const status = await api.getIndexingStatus();
+
+        if (status.active) {
+            updateIndexingUI(status.progress);
+
+            // Check if new photos have been added
+            const currentStats = await api.getStats();
+            if (currentStats.total_photos > state.lastSeenPhotoCount) {
+                state.lastSeenPhotoCount = currentStats.total_photos;
+                // Reload grid to show new photos
+                await loadClusters(true);
+            }
+
+            // Continue polling
+            state.indexingPollInterval = setTimeout(pollIndexingStatus, 2000);
+        } else {
+            // Indexing complete
+            stopIndexingProgressPoll();
+            await loadClusters(); // Full reload
+            await refreshStats();
+        }
+    } catch (err) {
+        console.error('Failed to poll indexing status:', err);
+        stopIndexingProgressPoll();
+    }
+}
+
+function updateIndexingUI(progress) {
+    const phaseNames = {
+        'starting': '🔄 Starting...',
+        'scanning': '📸 Scanning photos',
+        'embedding': '🧠 Computing embeddings',
+        'clustering': '🔗 Clustering similar photos',
+        'complete': '✅ Complete'
+    };
+
+    elements.indexingPhase.textContent = phaseNames[progress.phase] || progress.phase;
+    elements.indexingProgress.textContent = `${progress.current} / ${progress.total} (${progress.percent}%)`;
+    elements.indexingMessage.textContent = progress.message || '';
+    elements.indexingProgressBar.style.width = `${progress.percent}%`;
+}
+
+function stopIndexingProgressPoll() {
+    state.indexingActive = false;
+    elements.indexingBanner.classList.add('hidden');
+
+    if (state.indexingPollInterval) {
+        clearTimeout(state.indexingPollInterval);
+        state.indexingPollInterval = null;
+    }
+}
+
+// Cancel indexing removed - run indexing manually via CLI
+
 // ============================================
 // Data Loading
 // ============================================
@@ -538,71 +718,57 @@ async function resetAndLoad() {
 // ============================================
 
 function setupEventListeners() {
+    // Indexing controls removed - run indexing manually via CLI
+
+    // Database selector
+    elements.databaseSelector.addEventListener('change', async (e) => {
+        const dbName = e.target.value;
+        if (!dbName) return;
+
+        try {
+            await api.switchDatabase(dbName);
+            // Reload everything after switching
+            await init();
+        } catch (err) {
+            console.error('Failed to switch database:', err);
+            alert('Failed to switch database. Please try again.');
+        }
+    });
+
     // Filter changes
     elements.filterFolder.addEventListener('change', (e) => {
         state.folder = e.target.value;
         resetAndLoad();
     });
 
-    // Person picker toggle
-    elements.personPickerBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const isOpening = !elements.personPicker.classList.contains('open');
-        elements.personPicker.classList.toggle('open');
-
-        // Lazy load face images when dropdown opens for the first time
-        if (isOpening) {
-            elements.personPickerDropdown.querySelectorAll('img[data-src]').forEach(img => {
-                img.src = img.dataset.src;
-                img.removeAttribute('data-src');
-            });
-        }
-    });
-
-    // Person picker selection (delegated)
-    elements.personPickerDropdown.addEventListener('click', (e) => {
-        const opt = e.target.closest('.person-option');
-        if (!opt) return;
-
-        const personId = opt.dataset.personId;
-        const personName = opt.dataset.name || 'All People';
-        const faceId = opt.dataset.faceId;
-
-        state.personId = personId ? parseInt(personId) : null;
-
-        // Update button with face thumbnail
-        const displayName = personName || 'All People';
-        const faceHtml = (personId && faceId && faceId !== '')
-            ? `<img class="person-face" src="/api/face/${faceId}?size=50" alt="${displayName}">`
-            : '';
-
-        elements.personPickerBtn.innerHTML = `
-            ${faceHtml}
-            <span class="person-picker-label">${displayName}</span>
-            <span class="person-picker-arrow">▼</span>
-        `;
-
-        // Update selected state
-        elements.personPickerDropdown.querySelectorAll('.person-option').forEach(o => {
-            o.classList.toggle('selected', o.dataset.personId === personId);
-        });
-
-        elements.personPicker.classList.remove('open');
-        resetAndLoad();
-    });
-
-    // Close picker when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!elements.personPicker.contains(e.target)) {
-            elements.personPicker.classList.remove('open');
-        }
-    });
-
     elements.filterStarred.addEventListener('click', () => {
         state.starredOnly = !state.starredOnly;
-        elements.filterStarred.classList.toggle('active', state.starredOnly);
+        if (state.starredOnly) {
+            elements.filterStarred.classList.remove('text-slate-400');
+            elements.filterStarred.classList.add('text-accent', 'scale-110', 'rotate-12');
+        } else {
+            elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
+            elements.filterStarred.classList.add('text-slate-400');
+        }
         resetAndLoad();
     });
+
+    // Help button toggle
+    if (elements.helpBtn && elements.helpTooltip) {
+        const helpContainer = elements.helpBtn.closest('.relative');
+
+        elements.helpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            elements.helpTooltip.classList.toggle('hidden');
+        });
+
+        // Close help tooltip when clicking outside
+        document.addEventListener('click', (e) => {
+            if (helpContainer && !helpContainer.contains(e.target)) {
+                elements.helpTooltip.classList.add('hidden');
+            }
+        });
+    }
 
     // Modal controls
     elements.modalClose.addEventListener('click', closeModal);
@@ -716,19 +882,23 @@ function readURLParams() {
     const params = new URLSearchParams(window.location.search);
 
     state.folder = params.get('folder') || '';
-    state.personId = params.get('person') ? parseInt(params.get('person')) : null;
     state.starredOnly = params.get('starred') === 'true';
 
     // Update UI to match state
     elements.filterFolder.value = state.folder;
-    elements.filterStarred.classList.toggle('active', state.starredOnly);
+    if (state.starredOnly) {
+        elements.filterStarred.classList.remove('text-slate-400');
+        elements.filterStarred.classList.add('text-accent', 'scale-110', 'rotate-12');
+    } else {
+        elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
+        elements.filterStarred.classList.add('text-slate-400');
+    }
 }
 
 function updateURL() {
     const params = new URLSearchParams();
 
     if (state.folder) params.set('folder', state.folder);
-    if (state.personId) params.set('person', state.personId);
     if (state.starredOnly) params.set('starred', 'true');
 
     const newURL = params.toString()
@@ -741,6 +911,9 @@ function updateURL() {
 async function init() {
     setupEventListeners();
 
+    // Load available databases
+    await renderDatabases();
+
     // Read filters from URL
     readURLParams();
 
@@ -748,22 +921,26 @@ async function init() {
     state.stats = await api.getStats();
     renderStats();
 
-    // Update person picker button if person is selected from URL
-    if (state.personId && state.stats.persons) {
-        const person = state.stats.persons.find(p => p.id === state.personId);
-        if (person) {
-            const faceHtml = person.thumbnail_face_id
-                ? `<img class="person-face" src="/api/face/${person.thumbnail_face_id}?size=50" alt="${person.name}">`
-                : '';
-            elements.personPickerBtn.innerHTML = `
-                ${faceHtml}
-                <span class="person-picker-label">${person.name}</span>
-                <span class="person-picker-arrow">▼</span>
-            `;
-        }
+    // Check if we have any photos - show empty state if not
+    if (state.stats.total_photos === 0) {
+        elements.emptyState.classList.remove('hidden');
+        elements.grid.style.display = 'none';
+    } else {
+        elements.emptyState.classList.add('hidden');
+        elements.grid.style.display = '';
     }
 
-    await loadClusters();
+    // Check if indexing is in progress
+    const indexingStatus = await api.getIndexingStatus();
+    if (indexingStatus.active) {
+        startIndexingProgressPoll();
+    }
+
+
+    // Only load clusters if we have photos
+    if (state.stats.total_photos > 0) {
+        await loadClusters();
+    }
 }
 
 // Start the app

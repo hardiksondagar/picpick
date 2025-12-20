@@ -17,30 +17,35 @@ After any big event – a wedding, vacation, or family gathering – you're left
 
 ## The Solution
 
-PicBest uses **AI-powered clustering** and **face recognition** to organize your photos intelligently:
+PicBest uses **AI-powered clustering** to organize your photos intelligently:
 
 ### ✨ Key Features
 
 | Feature | Description |
 |---------|-------------|
+| 📁 **Directory Browser** | Browse your filesystem and select photo directories from the web UI |
+| ⚡ **Live Indexing** | Photos appear immediately as they're indexed - no waiting for completion |
+| 📊 **Real-time Progress** | Watch indexing progress with live updates on scanning, embedding, clustering |
 | 🎯 **Smart Clustering** | Groups visually similar photos using CLIP embeddings, so you only review one from each "burst" |
-| 👤 **Face Recognition** | Automatically identifies people across all photos – filter by person instantly |
 | 📅 **Timeline View** | Photos organized by date and time, with visual separators for different events |
 | ⭐ **Quick Starring** | Keyboard shortcuts for rapid photo selection (S to star, arrows to navigate) |
-| 🔗 **Shareable Filters** | URL-based filters – share links like `?person=123&folder=day1` |
+| 🔗 **Shareable Filters** | URL-based filters – share links like `?folder=day1&min_rating=3` |
+| 🗄️ **Multi-Database** | Switch between different photo collections from a dropdown |
 | 📤 **Easy Export** | Export starred photos to a folder, ready for your album |
 
 ### 🎬 How It Works
 
 ```
-5000 photos → AI Clustering → ~1000 unique moments → Star your favorites → Export 250-300
+Start server → Browse directories → Select folder → Auto-index in background → Star favorites → Export
 ```
 
-1. **Index** – Scans all photos, extracts metadata and generates AI embeddings
-2. **Cluster** – Groups similar photos by visual content + timestamp + faces
-3. **Review** – Web UI shows one photo per cluster, organized by date/time
-4. **Star** – Quickly mark your favorites with keyboard shortcuts
-5. **Export** – Copy starred photos to your album folder
+1. **Start Server** – Launch the web UI
+2. **Browse** – Navigate your filesystem from the browser
+3. **Select Directory** – Choose a folder with photos
+4. **Auto-Index** – Background process scans, embeds, and clusters photos
+5. **Review Live** – Photos appear immediately as indexing progresses
+6. **Star Favorites** – Mark your best shots with keyboard shortcuts
+7. **Export** – Copy starred photos to your album folder
 
 ---
 
@@ -67,13 +72,12 @@ cd PicBest
 The script will:
 - ✅ Check and install Python 3.11
 - ✅ Install Xcode Command Line Tools (if needed)
-- ✅ Install Homebrew dependencies (cmake, openblas)
+- ✅ Install Homebrew dependencies (cmake)
 - ✅ Create virtual environment
-- ✅ Build dlib with M1 optimizations
 - ✅ Install all Python packages
 - ✅ Test everything works
 
-**Time:** ~10-15 minutes (dlib compilation takes the longest)
+**Time:** ~5-10 minutes
 
 ### Other Platforms
 
@@ -92,56 +96,40 @@ sudo apt-get install cmake build-essential
 pip install -r requirements.txt
 ```
 
-**Note:** dlib installation varies by platform. See [dlib installation guide](http://dlib.net/compile.html) if you encounter issues.
-
 </details>
 
 ### Usage
 
-#### Step 1: Activate Environment
+The new PicBest workflow is entirely web-based - no need to run command-line indexing first!
+
+#### Quick Start Workflow
+
+**Step 1: Start the Server**
 
 ```bash
 source venv/bin/activate
-```
-
-#### Step 2: Add Your Photos
-
-```bash
-# Option A: Copy/symlink photos to the default folder
-mkdir -p photos
-cp -r /path/to/your/photos/* ./photos/
-# or symlink:
-ln -s /path/to/your/photos ./photos
-```
-
-#### Step 3: Index Your Photos
-
-```bash
-# Run indexer (uses ./photos by default)
-python index_photos.py
-
-# Or specify a custom directory:
-python index_photos.py --base-dir /path/to/your/photos
-
-# This will:
-# - Scan all JPG/JPEG/PNG files
-# - Extract EXIF metadata (dates, dimensions)
-# - Generate AI embeddings using CLIP
-# - Cluster similar photos together
-# - Detect faces and identify unique people
-```
-
-**First run takes ~30-60 minutes** for 5000 photos (subsequent runs are faster).
-
-#### Step 4: Launch the Web UI
-
-```bash
 python server.py
 ```
 
 Open **http://localhost:8000** in your browser.
 
-#### Step 5: Review & Star Photos
+**Step 2: Browse & Select Photo Directory**
+
+1. Click **"Browse & Index Photos"** button
+2. Navigate through your filesystem to find your photos
+3. See estimated photo counts for each folder
+4. Click **"Index This Directory"** when you've found the right folder
+
+**Step 3: Watch Live Progress**
+
+- Indexing starts immediately in the background
+- Progress banner shows real-time updates:
+  - 📸 Scanning photos
+  - 🧠 Computing embeddings
+  - 🔗 Clustering similar photos
+- Photos appear in the grid **as they're being indexed** - no need to wait!
+
+**Step 4: Review & Star Photos**
 
 | Action | Keyboard | Mouse |
 |--------|----------|-------|
@@ -150,7 +138,7 @@ Open **http://localhost:8000** in your browser.
 | Star/unstar | `S` or `Space` | Click ★ button |
 | Close modal | `Esc` | Click × |
 
-#### Step 6: Export Starred Photos
+**Step 5: Export Starred Photos**
 
 ```bash
 python export_starred.py --output /path/to/album/folder
@@ -161,29 +149,21 @@ python export_starred.py --output /path/to/album/folder
 #   --organize      Organize by date folders
 ```
 
+#### Advanced: Command-Line Indexing
+
+If you prefer the old workflow, you can still index from command line:
+
+```bash
+# Index a specific directory
+python index_photos.py --base-dir /path/to/your/photos
+
+# Then start the server
+python server.py
+```
+
 ---
 
 ## 🔧 Troubleshooting
-
-### dlib Installation Issues (M1 Mac)
-
-If `install_m1.sh` fails with dlib errors:
-
-```bash
-# Make sure you have Python 3.11
-brew install python@3.11
-
-# Install system dependencies
-brew install cmake openblas
-
-# Set SDK path and install manually
-export SDKROOT=$(xcrun --show-sdk-path)
-pip install dlib
-```
-
-### Face Recognition Not Working
-
-Check `face_detection.log` for errors. Face detection requires dlib to be properly installed.
 
 ### Out of Memory
 
@@ -215,7 +195,6 @@ Edit `index_photos.py` to adjust:
 ```python
 DBSCAN_EPS = 0.08           # Lower = tighter clusters (more groups)
 DBSCAN_MIN_SAMPLES = 1      # Minimum photos per cluster
-MIN_FACE_SIZE = 50          # Ignore faces smaller than this (pixels)
 ```
 
 ### Re-clustering
@@ -226,14 +205,6 @@ If you want to adjust clustering without re-indexing:
 python index_photos.py --recluster
 ```
 
-### Face Detection Only
-
-To run just face detection (after initial indexing):
-
-```bash
-python index_photos.py --faces
-```
-
 ---
 
 ## 🛠️ Tech Stack
@@ -241,14 +212,13 @@ python index_photos.py --faces
 | Component | Technology |
 |-----------|------------|
 | **Backend** | Python, FastAPI, SQLite |
-| **AI/ML** | CLIP (OpenAI), face_recognition, scikit-learn |
+| **AI/ML** | CLIP (OpenAI), scikit-learn |
 | **Frontend** | Vanilla JS, CSS Grid |
 | **Image Processing** | Pillow, imagehash |
 
 ### Why These Choices?
 
 - **CLIP** – State-of-the-art image understanding, groups photos by semantic content
-- **face_recognition** – Accurate face detection using dlib's CNN model
 - **SQLite** – Zero-config database, perfect for local tool
 - **Vanilla JS** – No build step, easy to modify
 
@@ -279,7 +249,6 @@ Contributions are welcome! Some ideas:
 - [ ] Drag-and-drop photo reordering
 - [ ] Album layout preview
 - [ ] Cloud storage integration (Google Photos, iCloud)
-- [ ] Batch face naming
 - [ ] Mobile-responsive UI
 - [ ] Video clip support
 
@@ -301,14 +270,13 @@ MIT License – Use it for personal projects, weddings, vacations, or commercial
 ## 🙏 Acknowledgments
 
 - [OpenAI CLIP](https://github.com/openai/CLIP) – For incredible image embeddings
-- [face_recognition](https://github.com/ageitgey/face_recognition) – For simple face detection API
 - [FastAPI](https://fastapi.tiangolo.com/) – For the excellent web framework
 
 ---
 
 ## 🪶 PicBest Lite
 
-Don't need AI clustering or face recognition? Just want to quickly star and export photos?
+Don't need AI clustering? Just want to quickly star and export photos?
 
 **PicBest Lite** is a single HTML file – no installation, no server, no dependencies.
 

@@ -1,49 +1,85 @@
 #!/usr/bin/env python3
 """
-PicBest Indexer - Scans photos, computes embeddings, detects faces, and clusters similar images.
-Now with face detection and person-aware clustering.
+PicBest Indexer - Scans photos, computes embeddings, and clusters similar images.
+Uses two-stage clustering: near-duplicates first, then semantic similarity.
 """
 
 import os
 import sqlite3
 import hashlib
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
-import json
+import time
 
 import numpy as np
 from PIL import Image
 from PIL.ExifTags import TAGS
 import imagehash
 from tqdm import tqdm
-from sklearn.cluster import DBSCAN, AgglomerativeClustering
 from sentence_transformers import SentenceTransformer
 
-# Face recognition (optional - graceful fallback if not installed)
+# Try HDBSCAN first (better), fallback to DBSCAN
 try:
-    import face_recognition
-    FACE_RECOGNITION_AVAILABLE = True
+    import hdbscan
+    USE_HDBSCAN = True
 except ImportError:
-    FACE_RECOGNITION_AVAILABLE = False
-    print("⚠ face_recognition not installed. Face features disabled.")
+    from sklearn.cluster import DBSCAN
+    USE_HDBSCAN = False
+    print("⚠ hdbscan not installed, using DBSCAN (pip install hdbscan for better results)")
 
 # Configuration - these can be overridden via CLI
 SCRIPT_DIR = Path(__file__).parent
-DEFAULT_PHOTOS_DIR = SCRIPT_DIR / "photos"  # Default: ./photos subfolder
-BASE_DIR = DEFAULT_PHOTOS_DIR  # Will be set by CLI or default
+DEFAULT_PHOTOS_DIR = SCRIPT_DIR / "photos"
+BASE_DIR = DEFAULT_PHOTOS_DIR
 DB_PATH = SCRIPT_DIR / "photos.db"
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic'}
 
-# Clustering parameters
-CLIP_MODEL = "clip-ViT-B-32"  # Good balance of speed and quality
-DBSCAN_EPS = 0.08  # Distance threshold for clustering (lower = tighter clusters)
-DBSCAN_MIN_SAMPLES = 1  # Minimum photos to form a cluster
-DHASH_THRESHOLD = 10  # Hamming distance threshold for near-duplicates
 
-# Face clustering parameters
-FACE_DISTANCE_THRESHOLD = 0.5  # Lower = stricter face matching (0.6 is default)
-MIN_FACE_SIZE = 20  # Minimum face size in pixels to consider
+def get_db():
+    """Get database connection."""
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+
+JOB_ID = None
+START_TIME = None
+
+# Clustering parameters
+CLIP_MODEL = "clip-ViT-B-32"
+
+# HDBSCAN params (auto-adapts, no manual eps)
+HDBSCAN_MIN_CLUSTER_SIZE = 2  # Min photos to form a cluster
+HDBSCAN_MIN_SAMPLES = 1       # More permissive
+
+# DBSCAN fallback params
+DBSCAN_EPS = 0.15             # Cosine distance threshold
+DBSCAN_MIN_SAMPLES = 1
+
+# Near-duplicate detection
+DHASH_THRESHOLD = 12  # Hamming distance for near-duplicates (0-256, lower=stricter)
+
+# Temporal clustering
+TIME_WEIGHT = 0.3     # How much time proximity matters (0-1)
+TIME_WINDOW_MINS = 5  # Photos within X minutes get time bonus
+
+
+def update_progress(phase: str, current: int, total: int, message: str):
+    """Write progress update to database for live monitoring."""
+    if not JOB_ID:
+        return
+
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE indexing_jobs
+            SET phase = ?, current = ?, total = ?, message = ?
+            WHERE id = ?
+        """, (phase, current, total, message, JOB_ID))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Warning: Failed to update progress: {e}")
 
 
 def get_db_connection():
@@ -72,11 +108,12 @@ def init_database():
             height INTEGER,
             file_size INTEGER,
             cluster_id INTEGER,
+            duplicate_group_id INTEGER,
             is_cluster_representative BOOLEAN DEFAULT 0,
             rating INTEGER DEFAULT 0,
             is_starred BOOLEAN DEFAULT 0,
             notes TEXT,
-            face_count INTEGER DEFAULT 0,
+            sharpness REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -97,47 +134,13 @@ def init_database():
             FOREIGN KEY (representative_photo_id) REFERENCES photos(id)
         );
 
-        -- Persons table (unique individuals detected across all photos)
-        CREATE TABLE IF NOT EXISTS persons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            photo_count INTEGER DEFAULT 0,
-            thumbnail_face_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        -- Faces table (each detected face in photos)
-        CREATE TABLE IF NOT EXISTS faces (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            photo_id INTEGER NOT NULL,
-            person_id INTEGER,
-            bbox_top INTEGER,
-            bbox_right INTEGER,
-            bbox_bottom INTEGER,
-            bbox_left INTEGER,
-            embedding BLOB,
-            FOREIGN KEY (photo_id) REFERENCES photos(id),
-            FOREIGN KEY (person_id) REFERENCES persons(id)
-        );
-
-        -- Photo-Person junction for quick lookups
-        CREATE TABLE IF NOT EXISTS photo_persons (
-            photo_id INTEGER NOT NULL,
-            person_id INTEGER NOT NULL,
-            face_count INTEGER DEFAULT 1,
-            PRIMARY KEY (photo_id, person_id),
-            FOREIGN KEY (photo_id) REFERENCES photos(id),
-            FOREIGN KEY (person_id) REFERENCES persons(id)
-        );
-
         -- Indexes for fast queries
         CREATE INDEX IF NOT EXISTS idx_photos_cluster ON photos(cluster_id);
+        CREATE INDEX IF NOT EXISTS idx_photos_duplicate_group ON photos(duplicate_group_id);
         CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);
         CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(is_starred);
         CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder);
-        CREATE INDEX IF NOT EXISTS idx_faces_photo ON faces(photo_id);
-        CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
-        CREATE INDEX IF NOT EXISTS idx_photo_persons_person ON photo_persons(person_id);
+        CREATE INDEX IF NOT EXISTS idx_photos_dhash ON photos(dhash);
     """)
 
     conn.commit()
@@ -163,7 +166,6 @@ def compute_file_hash(filepath: Path) -> str:
     """Compute MD5 hash of file for deduplication."""
     hasher = hashlib.md5()
     with open(filepath, 'rb') as f:
-        # Read in chunks for large files
         for chunk in iter(lambda: f.read(65536), b''):
             hasher.update(chunk)
     return hasher.hexdigest()
@@ -177,12 +179,31 @@ def compute_dhash(img: Image.Image, hash_size: int = 16) -> str:
         return ""
 
 
+def compute_sharpness(img: Image.Image) -> float:
+    """Compute image sharpness using Laplacian variance."""
+    try:
+        # Convert to grayscale and resize for speed
+        gray = img.convert('L')
+        gray.thumbnail((500, 500), Image.Resampling.LANCZOS)
+
+        # Compute Laplacian variance (higher = sharper)
+        arr = np.array(gray, dtype=np.float64)
+        # Simple Laplacian kernel convolution
+        laplacian = (
+            arr[:-2, 1:-1] + arr[2:, 1:-1] +
+            arr[1:-1, :-2] + arr[1:-1, 2:] -
+            4 * arr[1:-1, 1:-1]
+        )
+        return float(np.var(laplacian))
+    except Exception:
+        return 0.0
+
+
 def scan_photos() -> list[Path]:
     """Scan all photo directories and return list of photo paths."""
     photos = []
 
     for root, dirs, files in os.walk(BASE_DIR):
-        # Skip the script directory itself (PicBest/curator folder)
         root_path = Path(root)
         if root_path == SCRIPT_DIR or SCRIPT_DIR in root_path.parents:
             continue
@@ -196,7 +217,7 @@ def scan_photos() -> list[Path]:
 
 
 def index_photos(photos: list[Path]):
-    """Index all photos: extract metadata and compute hashes."""
+    """Index all photos: extract metadata, hashes, and sharpness."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -211,23 +232,24 @@ def index_photos(photos: list[Path]):
         return
 
     print(f"Indexing {len(new_photos)} new photos...")
+    total = len(new_photos)
+    commit_every = 10
 
-    for photo_path in tqdm(new_photos, desc="Indexing"):
+    for idx, photo_path in enumerate(tqdm(new_photos, desc="Indexing"), 1):
         try:
-            # Basic file info
+            update_progress('scanning', idx, total, f'Scanning photo {idx} of {total}')
+
             stat = photo_path.stat()
             file_size = stat.st_size
 
-            # Open image and extract metadata
             with Image.open(photo_path) as img:
                 width, height = img.size
                 taken_at = get_exif_datetime(img)
                 dhash = compute_dhash(img)
+                sharpness = compute_sharpness(img)
 
-            # Compute file hash
             file_hash = compute_file_hash(photo_path)
 
-            # Get folder name (relative to base)
             try:
                 folder = str(photo_path.parent.relative_to(BASE_DIR))
             except ValueError:
@@ -235,8 +257,8 @@ def index_photos(photos: list[Path]):
 
             cursor.execute("""
                 INSERT OR IGNORE INTO photos
-                (filepath, filename, folder, file_hash, dhash, taken_at, width, height, file_size)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (filepath, filename, folder, file_hash, dhash, taken_at, width, height, file_size, sharpness)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 str(photo_path),
                 photo_path.name,
@@ -246,8 +268,12 @@ def index_photos(photos: list[Path]):
                 taken_at,
                 width,
                 height,
-                file_size
+                file_size,
+                sharpness
             ))
+
+            if idx % commit_every == 0:
+                conn.commit()
 
         except Exception as e:
             print(f"\n⚠ Error indexing {photo_path}: {e}")
@@ -266,7 +292,6 @@ def compute_embeddings():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Get photos without embeddings
     cursor.execute("""
         SELECT p.id, p.filepath
         FROM photos p
@@ -281,17 +306,21 @@ def compute_embeddings():
         return
 
     print(f"Computing embeddings for {len(photos_to_embed)} photos...")
+    total = len(photos_to_embed)
 
     batch_size = 32
-    for i in tqdm(range(0, len(photos_to_embed), batch_size), desc="Embedding"):
+    for i in tqdm(range(0, total, batch_size), desc="Embedding"):
         batch = photos_to_embed[i:i+batch_size]
+
+        update_progress('embedding', min(i + batch_size, total), total,
+                       f'Computing embeddings {min(i + batch_size, total)} of {total}')
+
         images = []
         valid_ids = []
 
         for photo in batch:
             try:
                 img = Image.open(photo['filepath']).convert('RGB')
-                # Resize for faster processing
                 img.thumbnail((336, 336), Image.Resampling.LANCZOS)
                 images.append(img)
                 valid_ids.append(photo['id'])
@@ -300,7 +329,6 @@ def compute_embeddings():
                 continue
 
         if images:
-            # Compute embeddings in batch
             embeddings = model.encode(images, convert_to_numpy=True, show_progress_bar=False)
 
             for photo_id, embedding in zip(valid_ids, embeddings):
@@ -315,362 +343,140 @@ def compute_embeddings():
     print("✓ Embeddings computed")
 
 
-def find_near_duplicates():
-    """Find near-duplicate photos using dHash."""
+def hamming_distance(hash1: str, hash2: str) -> int:
+    """Compute Hamming distance between two hex hash strings."""
+    if not hash1 or not hash2 or len(hash1) != len(hash2):
+        return 256  # Max distance
+
+    # Convert hex to binary and count differences
+    try:
+        int1 = int(hash1, 16)
+        int2 = int(hash2, 16)
+        return bin(int1 ^ int2).count('1')
+    except ValueError:
+        return 256
+
+
+def find_duplicate_groups() -> dict[int, int]:
+    """
+    Stage 1: Find near-duplicate photos using dHash.
+    Returns mapping of photo_id -> duplicate_group_id.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, dhash FROM photos WHERE dhash IS NOT NULL AND dhash != ''")
+    cursor.execute("""
+        SELECT id, dhash FROM photos
+        WHERE dhash IS NOT NULL AND dhash != ''
+        ORDER BY id
+    """)
     photos = cursor.fetchall()
 
     print(f"Finding near-duplicates among {len(photos)} photos...")
 
-    # Build hash lookup
-    hash_to_ids = {}
+    # Union-Find for grouping duplicates
+    parent = {p['id']: p['id'] for p in photos}
+
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # Compare all pairs (O(n²) but fast for dHash comparison)
+    photo_list = list(photos)
+    comparisons = 0
+    duplicates_found = 0
+
+    for i in range(len(photo_list)):
+        for j in range(i + 1, len(photo_list)):
+            dist = hamming_distance(photo_list[i]['dhash'], photo_list[j]['dhash'])
+            comparisons += 1
+            if dist <= DHASH_THRESHOLD:
+                union(photo_list[i]['id'], photo_list[j]['id'])
+                duplicates_found += 1
+
+    # Build group mapping
+    groups = {}
     for photo in photos:
-        h = photo['dhash']
-        if h not in hash_to_ids:
-            hash_to_ids[h] = []
-        hash_to_ids[h].append(photo['id'])
+        root = find(photo['id'])
+        if root not in groups:
+            groups[root] = len(groups) + 1
 
-    # Find exact hash matches
-    duplicate_groups = [ids for ids in hash_to_ids.values() if len(ids) > 1]
+    photo_to_group = {photo['id']: groups[find(photo['id'])] for photo in photos}
 
-    exact_dupes = sum(len(g) - 1 for g in duplicate_groups)
-    print(f"✓ Found {exact_dupes} exact duplicates in {len(duplicate_groups)} groups")
-
-    conn.close()
-    return duplicate_groups
-
-
-def _process_single_photo(args):
-    """Worker function to process a single photo for face detection."""
-    photo_id, filepath, scale_factor = args
-
-    try:
-        # Load and resize image for faster processing
-        image = face_recognition.load_image_file(filepath)
-
-        # Resize for faster face detection
-        if scale_factor < 1.0:
-            h, w = image.shape[:2]
-            small_h, small_w = int(h * scale_factor), int(w * scale_factor)
-            small_image = np.array(Image.fromarray(image).resize((small_w, small_h)))
-        else:
-            small_image = image
-
-        # Detect face locations on small image (much faster)
-        face_locations_small = face_recognition.face_locations(small_image, model='hog')
-
-        if not face_locations_small:
-            return (photo_id, 0, [])  # No faces
-
-        # Scale face locations back to original size
-        face_locations = [
-            (int(top / scale_factor), int(right / scale_factor),
-             int(bottom / scale_factor), int(left / scale_factor))
-            for (top, right, bottom, left) in face_locations_small
-        ]
-
-        # Get face encodings from ORIGINAL image (for better quality)
-        face_encodings = face_recognition.face_encodings(image, face_locations, num_jitters=1)
-
-        # Build faces list
-        faces = []
-        for (top, right, bottom, left), encoding in zip(face_locations, face_encodings):
-            face_height = bottom - top
-            face_width = right - left
-            if face_height >= MIN_FACE_SIZE and face_width >= MIN_FACE_SIZE:
-                faces.append((top, right, bottom, left, encoding.tobytes()))
-
-        return (photo_id, len(faces), faces)
-
-    except Exception as e:
-        return (photo_id, -1, str(e))  # Error
-
-
-def detect_faces():
-    """Detect faces in all photos using multiprocessing."""
-    if not FACE_RECOGNITION_AVAILABLE:
-        print("⚠ Skipping face detection (face_recognition not installed)")
-        return
-
-    import multiprocessing as mp
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Get photos without face detection
-    cursor.execute("""
-        SELECT p.id, p.filepath
-        FROM photos p
-        WHERE p.id NOT IN (SELECT DISTINCT photo_id FROM faces)
-    """)
-    photos_to_scan = [(row['id'], row['filepath']) for row in cursor.fetchall()]
-
-    if not photos_to_scan:
-        print("✓ All faces already detected")
-        conn.close()
-        return
-
-    # Use number of CPU cores (leave 1 for system)
-    num_workers = max(1, mp.cpu_count() - 1)
-    scale_factor = 0.25  # 1/4 scale for speed
-
-    print(f"Detecting faces in {len(photos_to_scan)} photos...")
-    print(f"Using {num_workers} parallel workers + 1/4 scale (~{num_workers * 4}x faster)")
-
-    # Prepare args for workers
-    work_items = [(photo_id, filepath, scale_factor) for photo_id, filepath in photos_to_scan]
-
-    # Process in parallel with progress bar
-    results = []
-    with mp.Pool(num_workers) as pool:
-        for result in tqdm(pool.imap(_process_single_photo, work_items),
-                          total=len(work_items), desc="Face detection"):
-            results.append(result)
-
-            # Batch insert every 100 results
-            if len(results) >= 100:
-                _save_face_results(cursor, results)
-                conn.commit()
-                results = []
-
-    # Save remaining results
-    if results:
-        _save_face_results(cursor, results)
-        conn.commit()
-
-    conn.close()
-    print("✓ Face detection complete")
-
-
-def _save_face_results(cursor, results):
-    """Save batch of face detection results to database."""
-    for photo_id, face_count, faces_or_error in results:
-        if face_count == -1:
-            # Error occurred
-            print(f"\n⚠ Error processing photo {photo_id}: {faces_or_error}")
-            continue
-
-        # Update photo face count
-        cursor.execute("UPDATE photos SET face_count = ? WHERE id = ?", (face_count, photo_id))
-
-        # Insert faces
-        if face_count > 0:
-            for (top, right, bottom, left, encoding_bytes) in faces_or_error:
-                cursor.execute("""
-                    INSERT INTO faces (photo_id, bbox_top, bbox_right, bbox_bottom, bbox_left, embedding)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (photo_id, top, right, bottom, left, encoding_bytes))
-
-
-def cluster_persons():
-    """Cluster detected faces into unique persons."""
-    if not FACE_RECOGNITION_AVAILABLE:
-        print("⚠ Skipping person clustering (face_recognition not installed)")
-        return
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Get all faces without person assignment
-    cursor.execute("""
-        SELECT id, photo_id, embedding FROM faces WHERE embedding IS NOT NULL
-    """)
-    faces = cursor.fetchall()
-
-    if not faces:
-        print("⚠ No faces found to cluster")
-        conn.close()
-        return
-
-    print(f"Clustering {len(faces)} faces into persons...")
-
-    # Convert embeddings to numpy array
-    face_ids = [f['id'] for f in faces]
-    embeddings = np.array([
-        np.frombuffer(f['embedding'], dtype=np.float64)
-        for f in faces
-    ])
-
-    # Use Agglomerative Clustering for face grouping
-    # This works better than DBSCAN for face clustering
-    clustering = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=FACE_DISTANCE_THRESHOLD,
-        metric='euclidean',
-        linkage='average'
-    ).fit(embeddings)
-
-    labels = clustering.labels_
-    n_persons = len(set(labels))
-
-    print(f"✓ Found {n_persons} unique persons")
-
-    # Clear existing person assignments
-    cursor.execute("DELETE FROM persons")
-    cursor.execute("DELETE FROM photo_persons")
-    cursor.execute("UPDATE faces SET person_id = NULL")
-
-    # Create person records and assign faces
-    person_map = {}  # label -> person_id
-
-    for face_id, label in zip(face_ids, labels):
-        if label not in person_map:
-            cursor.execute("INSERT INTO persons (name) VALUES (?)", (f"Person {label + 1}",))
-            person_map[label] = cursor.lastrowid
-
-        person_id = person_map[label]
-        cursor.execute("UPDATE faces SET person_id = ? WHERE id = ?", (person_id, face_id))
-
-    # Build photo_persons junction table and update person stats
-    for label, person_id in person_map.items():
-        # Get all photos containing this person
-        cursor.execute("""
-            SELECT photo_id, COUNT(*) as cnt
-            FROM faces
-            WHERE person_id = ?
-            GROUP BY photo_id
-        """, (person_id,))
-
-        photo_counts = cursor.fetchall()
-
-        for row in photo_counts:
-            cursor.execute("""
-                INSERT OR REPLACE INTO photo_persons (photo_id, person_id, face_count)
-                VALUES (?, ?, ?)
-            """, (row['photo_id'], person_id, row['cnt']))
-
-        # Update person photo count
-        cursor.execute("""
-            UPDATE persons SET photo_count = ? WHERE id = ?
-        """, (len(photo_counts), person_id))
-
-        # Set thumbnail to the largest face of this person
-        cursor.execute("""
-            SELECT f.id, (f.bbox_bottom - f.bbox_top) * (f.bbox_right - f.bbox_left) as area
-            FROM faces f
-            WHERE f.person_id = ?
-            ORDER BY area DESC
-            LIMIT 1
-        """, (person_id,))
-        thumb = cursor.fetchone()
-        if thumb:
-            cursor.execute("UPDATE persons SET thumbnail_face_id = ? WHERE id = ?",
-                          (thumb['id'], person_id))
-
+    # Update database
+    for photo_id, group_id in photo_to_group.items():
+        cursor.execute(
+            "UPDATE photos SET duplicate_group_id = ? WHERE id = ?",
+            (group_id, photo_id)
+        )
     conn.commit()
 
-    # Print person stats
-    cursor.execute("""
-        SELECT name, photo_count FROM persons ORDER BY photo_count DESC LIMIT 10
-    """)
-    top_persons = cursor.fetchall()
+    # Count actual duplicate groups (more than 1 photo)
+    group_sizes = {}
+    for gid in photo_to_group.values():
+        group_sizes[gid] = group_sizes.get(gid, 0) + 1
 
-    print("\nTop persons by photo count:")
-    for p in top_persons:
-        print(f"  {p['name']}: {p['photo_count']} photos")
+    multi_photo_groups = sum(1 for size in group_sizes.values() if size > 1)
+    total_dupes = sum(size - 1 for size in group_sizes.values() if size > 1)
+
+    print(f"✓ Found {total_dupes} near-duplicates in {multi_photo_groups} groups")
 
     conn.close()
+    return photo_to_group
 
 
-def get_photo_persons(cursor, photo_id):
-    """Get set of person IDs in a photo."""
-    cursor.execute("SELECT person_id FROM photo_persons WHERE photo_id = ?", (photo_id,))
-    return set(row['person_id'] for row in cursor.fetchall())
-
-
-def compute_face_similarity(persons1: set, persons2: set) -> float:
-    """Compute Jaccard similarity between two sets of persons."""
-    if not persons1 and not persons2:
-        return 1.0  # Both have no faces - consider similar
-    if not persons1 or not persons2:
-        return 0.5  # One has faces, one doesn't - neutral
-    intersection = len(persons1 & persons2)
-    union = len(persons1 | persons2)
-    return intersection / union if union > 0 else 0.0
-
-
-def refine_clusters_by_faces(photo_ids: list, labels: np.ndarray, photo_persons: dict) -> np.ndarray:
+def compute_time_distance_matrix(timestamps: list[Optional[datetime]]) -> np.ndarray:
     """
-    Refine clusters by splitting those with inconsistent face sets.
-    Photos in the same cluster should have the same people.
+    Compute normalized time distance matrix.
+    Photos within TIME_WINDOW_MINS get distance 0, beyond that scales to 1.
     """
-    new_labels = labels.copy()
-    next_label = max(labels) + 1
+    n = len(timestamps)
+    time_dist = np.ones((n, n))
 
-    # Group photos by cluster
-    cluster_photos_map = {}
-    for photo_id, label in zip(photo_ids, labels):
-        if label == -1:
-            continue
-        if label not in cluster_photos_map:
-            cluster_photos_map[label] = []
-        cluster_photos_map[label].append(photo_id)
+    window = timedelta(minutes=TIME_WINDOW_MINS)
+    max_window = timedelta(hours=24)  # Beyond 24h, max time distance
 
-    # For each cluster, check face consistency
-    for cluster_label, cluster_photo_ids in cluster_photos_map.items():
-        if len(cluster_photo_ids) <= 1:
-            continue
+    for i in range(n):
+        for j in range(i + 1, n):
+            t1, t2 = timestamps[i], timestamps[j]
+            if t1 is None or t2 is None:
+                dist = 0.5  # Unknown time - neutral
+            else:
+                delta = abs((t1 - t2).total_seconds())
+                if delta <= window.total_seconds():
+                    dist = 0.0  # Same time window
+                elif delta >= max_window.total_seconds():
+                    dist = 1.0  # Very far apart
+                else:
+                    # Linear interpolation
+                    dist = (delta - window.total_seconds()) / (max_window.total_seconds() - window.total_seconds())
 
-        # Get person sets for all photos in cluster
-        person_sets = [photo_persons.get(pid, set()) for pid in cluster_photo_ids]
+            time_dist[i, j] = dist
+            time_dist[j, i] = dist
+        time_dist[i, i] = 0.0
 
-        # Skip if no faces in cluster
-        if all(len(ps) == 0 for ps in person_sets):
-            continue
-
-        # Find the dominant person set (most common combination)
-        # Group photos by their person set
-        set_groups = {}
-        for pid, pset in zip(cluster_photo_ids, person_sets):
-            key = frozenset(pset) if pset else frozenset()
-            if key not in set_groups:
-                set_groups[key] = []
-            set_groups[key].append(pid)
-
-        # If all photos have same people (or no faces), keep cluster intact
-        if len(set_groups) == 1:
-            continue
-
-        # Find the largest group - this keeps the original cluster label
-        largest_group = max(set_groups.values(), key=len)
-        largest_set = None
-        for key, group in set_groups.items():
-            if group == largest_group:
-                largest_set = key
-                break
-
-        # Assign new cluster labels to non-dominant groups
-        for person_set, group_photos in set_groups.items():
-            if person_set == largest_set:
-                continue  # Keep original label
-
-            # Check if this group can merge with the dominant group
-            # (e.g., subset relationship - same people but one photo has fewer detected)
-            if person_set and largest_set:
-                # If one is subset of other, keep together
-                if person_set.issubset(largest_set) or largest_set.issubset(person_set):
-                    continue
-
-            # Assign new cluster label to this group
-            for pid in group_photos:
-                idx = photo_ids.index(pid)
-                new_labels[idx] = next_label
-            next_label += 1
-
-    return new_labels
+    return time_dist
 
 
 def cluster_photos():
-    """Cluster photos using CLIP embeddings and face similarity."""
+    """
+    Stage 2: Cluster photos using CLIP embeddings + temporal proximity.
+    Uses HDBSCAN for automatic cluster detection.
+    """
+    update_progress('clustering', 0, 100, 'Starting clustering...')
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Load all embeddings
+    # Load all embeddings with timestamps
     cursor.execute("""
-        SELECT p.id, e.clip_embedding, p.taken_at
+        SELECT p.id, e.clip_embedding, p.taken_at, p.sharpness, p.width, p.height
         FROM photos p
         JOIN embeddings e ON p.id = e.photo_id
         ORDER BY p.taken_at, p.id
@@ -683,57 +489,78 @@ def cluster_photos():
         return
 
     print(f"Clustering {len(rows)} photos...")
+    update_progress('clustering', 10, 100, f'Clustering {len(rows)} photos...')
 
-    # Convert to numpy array
+    # Build data arrays
     photo_ids = [row['id'] for row in rows]
     embeddings = np.array([
         np.frombuffer(row['clip_embedding'], dtype=np.float32)
         for row in rows
     ])
+    timestamps = []
+    for row in rows:
+        if row['taken_at']:
+            try:
+                ts = datetime.fromisoformat(row['taken_at']) if isinstance(row['taken_at'], str) else row['taken_at']
+                timestamps.append(ts)
+            except:
+                timestamps.append(None)
+        else:
+            timestamps.append(None)
 
-    # Normalize embeddings for cosine similarity
-    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+    sharpness_scores = [row['sharpness'] or 0 for row in rows]
+    resolutions = [(row['width'] or 0) * (row['height'] or 0) for row in rows]
 
-    # Check if we have face data
-    cursor.execute("SELECT COUNT(*) as cnt FROM faces")
-    has_faces = cursor.fetchone()['cnt'] > 0
+    # Normalize embeddings
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1  # Avoid division by zero
+    embeddings = embeddings / norms
 
-    if has_faces:
-        print("Using face-aware clustering...")
-        # Pre-load person sets for all photos
-        photo_persons = {}
-        for photo_id in photo_ids:
-            photo_persons[photo_id] = get_photo_persons(cursor, photo_id)
+    # Compute visual distance matrix (cosine distance)
+    print("Computing visual similarity matrix...")
+    visual_dist = 1 - np.dot(embeddings, embeddings.T)
+    visual_dist = np.clip(visual_dist, 0, 2)  # Clamp numerical errors
 
-    # Run DBSCAN clustering
-    print("Running DBSCAN clustering...")
-    clustering = DBSCAN(
-        eps=DBSCAN_EPS,
-        min_samples=DBSCAN_MIN_SAMPLES,
-        metric='cosine',
-        n_jobs=-1
-    ).fit(embeddings)
+    # Compute time distance matrix
+    print("Computing temporal proximity matrix...")
+    time_dist = compute_time_distance_matrix(timestamps)
 
-    labels = clustering.labels_
+    # Combined distance: weighted average
+    print(f"Combining distances (visual weight: {1-TIME_WEIGHT:.0%}, time weight: {TIME_WEIGHT:.0%})...")
+    combined_dist = (1 - TIME_WEIGHT) * visual_dist + TIME_WEIGHT * time_dist
+
+    # Run clustering
+    if USE_HDBSCAN:
+        print("Running HDBSCAN clustering...")
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=HDBSCAN_MIN_CLUSTER_SIZE,
+            min_samples=HDBSCAN_MIN_SAMPLES,
+            metric='precomputed',
+            cluster_selection_method='eom',  # Excess of Mass - good for varying densities
+            cluster_selection_epsilon=0.0,    # Let HDBSCAN decide
+        )
+        labels = clusterer.fit_predict(combined_dist)
+    else:
+        print("Running DBSCAN clustering...")
+        clusterer = DBSCAN(
+            eps=DBSCAN_EPS,
+            min_samples=DBSCAN_MIN_SAMPLES,
+            metric='precomputed',
+            n_jobs=-1
+        )
+        labels = clusterer.fit_predict(combined_dist)
+
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise = list(labels).count(-1)
 
-    print(f"✓ Found {n_clusters} initial clusters ({n_noise} unclustered photos)")
-
-    # If we have face data, refine clusters by face consistency
-    if has_faces:
-        print("Refining clusters by face consistency...")
-        refined_labels = refine_clusters_by_faces(photo_ids, labels, photo_persons)
-        labels = refined_labels
-        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-        print(f"✓ Refined to {n_clusters} clusters")
+    print(f"✓ Found {n_clusters} clusters ({n_noise} unclustered photos)")
 
     # Clear existing cluster assignments
     cursor.execute("DELETE FROM clusters")
     cursor.execute("UPDATE photos SET cluster_id = NULL, is_cluster_representative = 0")
 
     # Assign cluster IDs
-    cluster_map = {}  # old_label -> new_cluster_id
+    cluster_map = {}
 
     for photo_id, label in zip(photo_ids, labels):
         if label == -1:
@@ -755,19 +582,16 @@ def cluster_photos():
             cluster_id = cluster_map[label]
             cursor.execute("UPDATE photos SET cluster_id = ? WHERE id = ?", (cluster_id, photo_id))
 
-    # Update cluster stats and pick representatives
+    # Update cluster stats and pick best representative
     for old_label, cluster_id in cluster_map.items():
-        # Count photos in cluster
-        cursor.execute("""
-            SELECT COUNT(*) as cnt FROM photos WHERE cluster_id = ?
-        """, (cluster_id,))
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE cluster_id = ?", (cluster_id,))
         count = cursor.fetchone()['cnt']
 
-        # Pick representative (first photo by timestamp, or highest resolution)
+        # Pick representative: highest sharpness, then resolution, then earliest
         cursor.execute("""
             SELECT id FROM photos
             WHERE cluster_id = ?
-            ORDER BY taken_at ASC, (width * height) DESC
+            ORDER BY sharpness DESC, (width * height) DESC, taken_at ASC
             LIMIT 1
         """, (cluster_id,))
         rep = cursor.fetchone()
@@ -800,9 +624,16 @@ def cluster_photos():
     if len(dist) > 10:
         print(f"  ... and {len(dist) - 10} more size categories")
 
+    # Show multi-photo clusters
+    cursor.execute("""
+        SELECT COUNT(*) as cnt FROM clusters WHERE photo_count > 1
+    """)
+    multi = cursor.fetchone()['cnt']
+
     cursor.execute("SELECT COUNT(*) as cnt FROM clusters")
     total_clusters = cursor.fetchone()['cnt']
-    print(f"\n✓ Total: {total_clusters} clusters from {len(photo_ids)} photos")
+    print(f"\n✓ {multi} multi-photo clusters, {total_clusters - multi} singletons")
+    print(f"✓ Total: {total_clusters} clusters from {len(photo_ids)} photos")
 
     conn.close()
 
@@ -818,36 +649,41 @@ def print_stats():
     cursor.execute("SELECT COUNT(*) as cnt FROM clusters")
     total_clusters = cursor.fetchone()['cnt']
 
+    cursor.execute("SELECT COUNT(*) as cnt FROM clusters WHERE photo_count > 1")
+    multi_clusters = cursor.fetchone()['cnt']
+
     cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0")
     rated = cursor.fetchone()['cnt']
 
     cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
     starred = cursor.fetchone()['cnt']
 
+    # Duplicate stats
+    cursor.execute("""
+        SELECT COUNT(DISTINCT duplicate_group_id) as groups,
+               COUNT(*) as photos
+        FROM photos
+        WHERE duplicate_group_id IN (
+            SELECT duplicate_group_id FROM photos
+            GROUP BY duplicate_group_id HAVING COUNT(*) > 1
+        )
+    """)
+    dup_stats = cursor.fetchone()
+
     cursor.execute("SELECT folder, COUNT(*) as cnt FROM photos GROUP BY folder ORDER BY folder")
     folders = cursor.fetchall()
-
-    # Face stats
-    cursor.execute("SELECT COUNT(*) as cnt FROM faces")
-    total_faces = cursor.fetchone()['cnt']
-
-    cursor.execute("SELECT COUNT(*) as cnt FROM persons")
-    total_persons = cursor.fetchone()['cnt']
-
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE face_count > 0")
-    photos_with_faces = cursor.fetchone()['cnt']
 
     print("\n" + "="*50)
     print("DATABASE STATISTICS")
     print("="*50)
-    print(f"Total photos:    {total_photos}")
-    print(f"Total clusters:  {total_clusters}")
-    print(f"Rated:           {rated}")
-    print(f"Starred:         {starred}")
-    print(f"\nFace Recognition:")
-    print(f"  Photos with faces: {photos_with_faces}")
-    print(f"  Total faces:       {total_faces}")
-    print(f"  Unique persons:    {total_persons}")
+    print(f"Total photos:      {total_photos}")
+    print(f"Total clusters:    {total_clusters}")
+    print(f"  Multi-photo:     {multi_clusters}")
+    print(f"  Singletons:      {total_clusters - multi_clusters}")
+    if dup_stats['groups']:
+        print(f"Duplicate groups:  {dup_stats['groups']} ({dup_stats['photos']} photos)")
+    print(f"Rated:             {rated}")
+    print(f"Starred:           {starred}")
     print("\nPhotos by folder:")
     for f in folders:
         print(f"  {f['folder']}: {f['cnt']}")
@@ -859,17 +695,19 @@ def print_stats():
 def main():
     """Main indexing pipeline."""
     import argparse
-    global BASE_DIR
+    global BASE_DIR, JOB_ID, START_TIME
 
     parser = argparse.ArgumentParser(description='PicBest - Index and cluster photos')
     parser.add_argument('--base-dir', '-d', type=str, default=None,
                         help=f'Directory containing photos (default: {DEFAULT_PHOTOS_DIR})')
+    parser.add_argument('--job-id', type=int, default=None,
+                        help='Database job ID for progress tracking')
     parser.add_argument('--recluster', action='store_true',
                         help='Only re-run clustering (skip scanning and embedding)')
-    parser.add_argument('--faces', action='store_true',
-                        help='Only run face detection')
-    parser.add_argument('--no-faces', action='store_true',
-                        help='Skip face detection')
+    parser.add_argument('--eps', type=float, default=None,
+                        help='DBSCAN epsilon (only if HDBSCAN not available)')
+    parser.add_argument('--time-weight', type=float, default=None,
+                        help='Time proximity weight (0-1, default 0.3)')
 
     args = parser.parse_args()
 
@@ -879,33 +717,35 @@ def main():
     else:
         BASE_DIR = DEFAULT_PHOTOS_DIR.resolve()
 
+    # Override clustering params
+    global DBSCAN_EPS, TIME_WEIGHT
+    if args.eps:
+        DBSCAN_EPS = args.eps
+    if args.time_weight is not None:
+        TIME_WEIGHT = args.time_weight
+
+    # Set job ID for progress tracking
+    if args.job_id:
+        JOB_ID = args.job_id
+        START_TIME = time.time()
+
     recluster_only = args.recluster
-    faces_only = args.faces
-    skip_faces = args.no_faces
 
     print("="*50)
     print("PicBest - PHOTO INDEXER")
     print("="*50)
     print(f"Base directory: {BASE_DIR}")
     print(f"Database: {DB_PATH}")
+    print(f"Clustering: {'HDBSCAN (auto-tuning)' if USE_HDBSCAN else f'DBSCAN (eps={DBSCAN_EPS})'}")
+    print(f"Time weight: {TIME_WEIGHT:.0%}")
+    if JOB_ID:
+        print(f"Job ID: {JOB_ID}")
     if recluster_only:
         print("Mode: Re-clustering only")
-    if faces_only:
-        print("Mode: Face detection only")
-    if skip_faces:
-        print("Mode: Skipping face detection")
     print()
 
     # Step 1: Initialize database
     init_database()
-
-    if faces_only:
-        # Only run face detection and clustering
-        detect_faces()
-        cluster_persons()
-        print_stats()
-        print("\n✓ Face detection complete!")
-        return
 
     if not recluster_only:
         # Step 2: Scan and index photos
@@ -921,15 +761,10 @@ def main():
         # Step 3: Compute CLIP embeddings
         compute_embeddings()
 
-        # Step 4: Find near-duplicates
-        find_near_duplicates()
+        # Step 4: Find near-duplicates (Stage 1)
+        find_duplicate_groups()
 
-        # Step 5: Detect faces (unless skipped)
-        if not skip_faces:
-            detect_faces()
-            cluster_persons()
-
-    # Step 6: Cluster similar photos (with face awareness if available)
+    # Step 5: Cluster similar photos (Stage 2)
     cluster_photos()
 
     # Print final stats
@@ -937,7 +772,38 @@ def main():
 
     print("\n✓ Indexing complete! Run 'python server.py' to start the rating UI.")
 
+    # Mark job as complete
+    if JOB_ID:
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE indexing_jobs
+                SET status = 'completed', phase = 'complete', message = 'Indexing complete!',
+                    completed_at = ?
+                WHERE id = ?
+            """, (datetime.now().isoformat(), JOB_ID))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Warning: Failed to mark job complete: {e}")
+
 
 if __name__ == "__main__":
-    main()
-
+    try:
+        main()
+    except Exception as e:
+        if JOB_ID:
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE indexing_jobs
+                    SET status = 'error', error = ?, completed_at = ?
+                    WHERE id = ?
+                """, (str(e), datetime.now().isoformat(), JOB_ID))
+                conn.commit()
+                conn.close()
+            except:
+                pass
+        raise

@@ -9,6 +9,12 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 import mimetypes
+import json
+import subprocess
+import os
+import signal
+import time
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -18,9 +24,9 @@ from PIL import Image
 import uvicorn
 
 # Configuration
-DB_PATH = Path(__file__).parent / "photos.db"
-STATIC_DIR = Path(__file__).parent / "static"
-THUMB_DIR = Path(__file__).parent / "thumbnails"
+BASE_DIR = Path(__file__).parent
+STATIC_DIR = BASE_DIR / "static"
+THUMB_DIR = BASE_DIR / "thumbnails"
 
 # Thumbnail sizes
 THUMB_SIZES = {
@@ -29,14 +35,186 @@ THUMB_SIZES = {
     'full': None    # Original size
 }
 
+# Current database (can be switched dynamically)
+_current_db_path = BASE_DIR / "photos.db"
+
+# Directory browsing restrictions (for security)
+ALLOWED_BASE_PATHS = [
+    Path.home(),  # User's home directory
+    Path("/Volumes"),  # macOS external drives
+    Path("/mnt"),  # Linux mount points
+]
+
 app = FastAPI(title="PicBest")
 
 
 def get_db():
     """Get database connection."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(_current_db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_available_databases():
+    """List all available database files."""
+    dbs = []
+
+    # Look for .db files in base directory
+    for db_file in BASE_DIR.glob("*.db"):
+        db_info = {
+            'name': db_file.stem,
+            'filename': db_file.name,
+            'path': str(db_file),
+            'size': db_file.stat().st_size,
+            'modified': db_file.stat().st_mtime,
+            'active': db_file == _current_db_path
+        }
+        dbs.append(db_info)
+
+    # Sort by modified time (newest first)
+    dbs.sort(key=lambda x: x['modified'], reverse=True)
+    return dbs
+
+
+def is_path_allowed(path: Path) -> bool:
+    """Check if a path is within allowed directories."""
+    try:
+        resolved = path.resolve()
+        for allowed in ALLOWED_BASE_PATHS:
+            if resolved.is_relative_to(allowed):
+                return True
+        return False
+    except (ValueError, OSError):
+        return False
+
+
+def count_image_files(directory: Path, max_depth: int = 2) -> int:
+    """Estimate number of image files in a directory (quick scan)."""
+    count = 0
+    extensions = {'.jpg', '.jpeg', '.png', '.webp', '.heic'}
+
+    try:
+        for item in directory.iterdir():
+            if item.is_file() and item.suffix.lower() in extensions:
+                count += 1
+            elif item.is_dir() and max_depth > 0:
+                count += count_image_files(item, max_depth - 1)
+
+            # Stop early if we've found a lot (performance)
+            if count > 1000:
+                return count
+    except (PermissionError, OSError):
+        pass
+
+    return count
+
+
+def create_indexing_job(directory: str) -> int:
+    """Create a new indexing job and return its ID."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO indexing_jobs (directory, status, phase, message)
+        VALUES (?, 'running', 'starting', 'Initializing...')
+    """, (directory,))
+    job_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return job_id
+
+
+def update_indexing_job(job_id: int, **kwargs):
+    """Update indexing job fields."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Build dynamic update
+    fields = []
+    values = []
+    for key, value in kwargs.items():
+        fields.append(f"{key} = ?")
+        values.append(value)
+
+    if fields:
+        values.append(job_id)
+        cursor.execute(f"""
+            UPDATE indexing_jobs
+            SET {', '.join(fields)}
+            WHERE id = ?
+        """, values)
+        conn.commit()
+
+    conn.close()
+
+
+def init_database():
+    """Initialize database schema if it doesn't exist."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.executescript("""
+        -- Photos table
+        CREATE TABLE IF NOT EXISTS photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filepath TEXT UNIQUE NOT NULL,
+            filename TEXT NOT NULL,
+            folder TEXT NOT NULL,
+            file_hash TEXT NOT NULL,
+            dhash TEXT,
+            taken_at TIMESTAMP,
+            width INTEGER,
+            height INTEGER,
+            file_size INTEGER,
+            cluster_id INTEGER,
+            is_cluster_representative BOOLEAN DEFAULT 0,
+            rating INTEGER DEFAULT 0,
+            is_starred BOOLEAN DEFAULT 0,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Embeddings table
+        CREATE TABLE IF NOT EXISTS embeddings (
+            photo_id INTEGER PRIMARY KEY,
+            clip_embedding BLOB,
+            FOREIGN KEY (photo_id) REFERENCES photos(id)
+        );
+
+        -- Clusters table
+        CREATE TABLE IF NOT EXISTS clusters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            photo_count INTEGER DEFAULT 0,
+            representative_photo_id INTEGER,
+            avg_timestamp TIMESTAMP,
+            FOREIGN KEY (representative_photo_id) REFERENCES photos(id)
+        );
+
+
+        -- Indexing jobs table
+        CREATE TABLE IF NOT EXISTS indexing_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            directory TEXT NOT NULL,
+            status TEXT NOT NULL, -- 'running', 'completed', 'cancelled', 'error'
+            phase TEXT, -- 'scanning', 'hashing', 'embeddings', 'duplicates', 'clustering'
+            current INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            message TEXT,
+            error TEXT,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        );
+
+        -- Indexes for performance
+        CREATE INDEX IF NOT EXISTS idx_photos_cluster ON photos(cluster_id);
+        CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder);
+        CREATE INDEX IF NOT EXISTS idx_photos_taken_at ON photos(taken_at);
+        CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);
+        CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(is_starred);
+    """)
+
+    conn.commit()
+    conn.close()
 
 
 # ============== API Models ==============
@@ -53,64 +231,145 @@ class PhotoNotes(BaseModel):
 
 # ============== API Endpoints ==============
 
+@app.get("/api/directories")
+def browse_directories(path: str = Query(None)):
+    """Browse server-side directories."""
+    # Default to home directory
+    if not path:
+        target = Path.home()
+    else:
+        target = Path(path)
+
+    # Security check
+    if not is_path_allowed(target):
+        raise HTTPException(status_code=403, detail="Access to this directory is not allowed")
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+
+    # Get parent directory
+    parent = str(target.parent) if target.parent != target else None
+
+    # List subdirectories
+    directories = []
+    try:
+        for item in sorted(target.iterdir(), key=lambda x: x.name.lower()):
+            if item.is_dir() and not item.name.startswith('.'):
+                # Estimate photo count (quick scan)
+                photo_count = count_image_files(item, max_depth=1)
+
+                directories.append({
+                    'name': item.name,
+                    'path': str(item),
+                    'photo_count_estimate': photo_count
+                })
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    return {
+        'current': str(target),
+        'parent': parent if parent and is_path_allowed(Path(parent)) else None,
+        'directories': directories
+    }
+
+
+@app.get("/api/directories/home")
+def get_home_directory():
+    """Get user's home directory path."""
+    return {'path': str(Path.home())}
+
+
+@app.get("/api/databases")
+def list_databases():
+    """Get list of available database files."""
+    return {'databases': get_available_databases()}
+
+
+@app.post("/api/databases/switch")
+def switch_database(db_name: str = Query(...)):
+    """Switch to a different database file."""
+    global _current_db_path
+
+    target_path = BASE_DIR / f"{db_name}.db"
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Database not found")
+
+    _current_db_path = target_path
+    return {'success': True, 'active_database': db_name}
+
+
 @app.get("/api/stats")
 def get_stats():
     """Get overall statistics."""
-    conn = get_db()
-    cursor = conn.cursor()
+    # Check if database exists and has tables
+    if not _current_db_path.exists():
+        return {
+            'total_photos': 0,
+            'total_clusters': 0,
+            'rated_photos': 0,
+            'starred_photos': 0,
+            'keeper_photos': 0,
+            'rating_distribution': {},
+            'folders': []
+        }
 
-    stats = {}
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos")
-    stats['total_photos'] = cursor.fetchone()['cnt']
+        stats = {}
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM clusters")
-    stats['total_clusters'] = cursor.fetchone()['cnt']
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos")
+        stats['total_photos'] = cursor.fetchone()['cnt']
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0")
-    stats['rated_photos'] = cursor.fetchone()['cnt']
+        cursor.execute("SELECT COUNT(*) as cnt FROM clusters")
+        stats['total_clusters'] = cursor.fetchone()['cnt']
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
-    stats['starred_photos'] = cursor.fetchone()['cnt']
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0")
+        stats['rated_photos'] = cursor.fetchone()['cnt']
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating >= 3")
-    stats['keeper_photos'] = cursor.fetchone()['cnt']
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
+        stats['starred_photos'] = cursor.fetchone()['cnt']
 
-    # Rating distribution
-    cursor.execute("""
-        SELECT rating, COUNT(*) as cnt
-        FROM photos
-        GROUP BY rating
-        ORDER BY rating
-    """)
-    stats['rating_distribution'] = {row['rating']: row['cnt'] for row in cursor.fetchall()}
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating >= 3")
+        stats['keeper_photos'] = cursor.fetchone()['cnt']
 
-    # Folders
-    cursor.execute("""
-        SELECT folder, COUNT(*) as cnt
-        FROM photos
-        GROUP BY folder
-        ORDER BY folder
-    """)
-    stats['folders'] = [{'name': row['folder'], 'count': row['cnt']} for row in cursor.fetchall()]
+        # Rating distribution
+        cursor.execute("""
+            SELECT rating, COUNT(*) as cnt
+            FROM photos
+            GROUP BY rating
+            ORDER BY rating
+        """)
+        stats['rating_distribution'] = {row['rating']: row['cnt'] for row in cursor.fetchall()}
 
-    # Persons (for face filtering)
-    cursor.execute("""
-        SELECT id, name, photo_count, thumbnail_face_id
-        FROM persons
-        WHERE photo_count > 0
-        ORDER BY photo_count DESC
-    """)
-    stats['persons'] = [
-        {'id': row['id'], 'name': row['name'], 'count': row['photo_count'], 'thumbnail_face_id': row['thumbnail_face_id']}
-        for row in cursor.fetchall()
-    ]
+        # Folders
+        cursor.execute("""
+            SELECT folder, COUNT(*) as cnt
+            FROM photos
+            GROUP BY folder
+            ORDER BY folder
+        """)
+        stats['folders'] = [{'name': row['folder'], 'count': row['cnt']} for row in cursor.fetchall()]
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM persons")
-    stats['total_persons'] = cursor.fetchone()['cnt']
 
-    conn.close()
-    return stats
+        conn.close()
+        return stats
+
+    except sqlite3.OperationalError:
+        # Database exists but tables not created yet
+        return {
+            'total_photos': 0,
+            'total_clusters': 0,
+            'rated_photos': 0,
+            'starred_photos': 0,
+            'keeper_photos': 0,
+            'rating_distribution': {},
+            'folders': []
+        }
 
 
 @app.get("/api/clusters")
@@ -120,102 +379,184 @@ def get_clusters(
     folder: Optional[str] = None,
     min_rating: Optional[int] = None,
     starred_only: bool = False,
-    unrated_only: bool = False,
-    person_id: Optional[int] = None
+    unrated_only: bool = False
 ):
     """Get clusters with their representative photos."""
-    conn = get_db()
-    cursor = conn.cursor()
+    # Check if database exists
+    if not _current_db_path.exists():
+        return {
+            'clusters': [],
+            'total': 0,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': 0
+        }
 
-    # Build query
-    conditions = []
-    params = []
-    joins = []
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
 
-    if folder:
-        conditions.append("p.folder = ?")
-        params.append(folder)
+        # Build query
+        conditions = []
+        params = []
+        joins = []
 
-    if person_id:
-        joins.append("JOIN faces f ON p.id = f.photo_id")
-        conditions.append("f.person_id = ?")
-        params.append(person_id)
+        if folder:
+            conditions.append("p.folder = ?")
+            params.append(folder)
 
-    if min_rating is not None:
-        conditions.append("p.rating >= ?")
-        params.append(min_rating)
+        if min_rating is not None:
+            conditions.append("p.rating >= ?")
+            params.append(min_rating)
 
-    if starred_only:
-        conditions.append("p.is_starred = 1")
+        if starred_only:
+            conditions.append("p.is_starred = 1")
 
-    if unrated_only:
-        conditions.append("p.rating = 0")
+        if unrated_only:
+            conditions.append("p.rating = 0")
 
-    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
-    join_clause = " ".join(joins) if joins else ""
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+        join_clause = " ".join(joins) if joins else ""
 
-    # Count total matching clusters
-    count_query = f"""
-        SELECT COUNT(DISTINCT c.id) as cnt
-        FROM clusters c
-        JOIN photos p ON c.representative_photo_id = p.id
-        {join_clause}
-        {where_clause}
-    """
-    cursor.execute(count_query, params)
-    total = cursor.fetchone()['cnt']
+        # Count total matching clusters
+        count_query = f"""
+            SELECT COUNT(DISTINCT c.id) as cnt
+            FROM clusters c
+            JOIN photos p ON c.representative_photo_id = p.id
+            {join_clause}
+            {where_clause}
+        """
+        cursor.execute(count_query, params)
+        total_row = cursor.fetchone()
+        total = total_row['cnt'] if total_row else 0
 
-    # Get clusters with representative photos
-    offset = (page - 1) * per_page
-    query = f"""
-        SELECT DISTINCT
-            c.id as cluster_id,
-            c.photo_count,
-            p.id as photo_id,
-            p.filepath,
-            p.filename,
-            p.folder,
-            p.rating,
-            p.is_starred,
-            p.taken_at,
-            p.width,
-            p.height
-        FROM clusters c
-        JOIN photos p ON c.representative_photo_id = p.id
-        {join_clause}
-        {where_clause}
-        ORDER BY p.taken_at ASC, c.id ASC
-        LIMIT ? OFFSET ?
-    """
-    cursor.execute(query, params + [per_page, offset])
+        # If no clusters exist, show unclustered photos instead
+        if total == 0:
+            # Count unclustered photos
+            unclustered_conditions = conditions.copy() if conditions else []
+            unclustered_params = params.copy()
+            unclustered_where = "WHERE " + " AND ".join(unclustered_conditions) if unclustered_conditions else ""
 
-    clusters = []
-    for row in cursor.fetchall():
-        clusters.append({
-            'cluster_id': row['cluster_id'],
-            'photo_count': row['photo_count'],
-            'representative': {
-                'id': row['photo_id'],
-                'filepath': row['filepath'],
-                'filename': row['filename'],
-                'folder': row['folder'],
-                'rating': row['rating'],
-                'is_starred': bool(row['is_starred']),
-                'taken_at': row['taken_at'],
-                'width': row['width'],
-                'height': row['height']
+            count_query = f"""
+                SELECT COUNT(*) as cnt
+                FROM photos p
+                {join_clause}
+                {unclustered_where}
+            """
+            cursor.execute(count_query, unclustered_params)
+            total_row = cursor.fetchone()
+            total = total_row['cnt'] if total_row else 0
+
+            # Get unclustered photos as individual "clusters"
+            offset = (page - 1) * per_page
+            query = f"""
+                SELECT
+                    p.id as photo_id,
+                    p.filepath,
+                    p.filename,
+                    p.folder,
+                    p.rating,
+                    p.is_starred,
+                    p.taken_at,
+                    p.width,
+                    p.height
+                FROM photos p
+                {join_clause}
+                {unclustered_where}
+                ORDER BY p.taken_at ASC, p.id ASC
+                LIMIT ? OFFSET ?
+            """
+            cursor.execute(query, unclustered_params + [per_page, offset])
+
+            clusters = []
+            for row in cursor.fetchall():
+                clusters.append({
+                    'cluster_id': row['photo_id'],  # Use photo ID as cluster ID
+                    'photo_count': 1,
+                    'representative': {
+                        'id': row['photo_id'],
+                        'filepath': row['filepath'],
+                        'filename': row['filename'],
+                        'folder': row['folder'],
+                        'rating': row['rating'],
+                        'is_starred': bool(row['is_starred']),
+                        'taken_at': row['taken_at'],
+                        'width': row['width'],
+                        'height': row['height']
+                    }
+                })
+
+            conn.close()
+
+            return {
+                'clusters': clusters,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': (total + per_page - 1) // per_page
             }
-        })
 
-    conn.close()
+        # Get clusters with representative photos
+        offset = (page - 1) * per_page
+        query = f"""
+            SELECT DISTINCT
+                c.id as cluster_id,
+                c.photo_count,
+                p.id as photo_id,
+                p.filepath,
+                p.filename,
+                p.folder,
+                p.rating,
+                p.is_starred,
+                p.taken_at,
+                p.width,
+                p.height
+            FROM clusters c
+            JOIN photos p ON c.representative_photo_id = p.id
+            {join_clause}
+            {where_clause}
+            ORDER BY p.taken_at ASC, c.id ASC
+            LIMIT ? OFFSET ?
+        """
+        cursor.execute(query, params + [per_page, offset])
 
-    return {
-        'clusters': clusters,
-        'total': total,
-        'page': page,
-        'per_page': per_page,
-        'total_pages': (total + per_page - 1) // per_page
-    }
+        clusters = []
+        for row in cursor.fetchall():
+            clusters.append({
+                'cluster_id': row['cluster_id'],
+                'photo_count': row['photo_count'],
+                'representative': {
+                    'id': row['photo_id'],
+                    'filepath': row['filepath'],
+                    'filename': row['filename'],
+                    'folder': row['folder'],
+                    'rating': row['rating'],
+                    'is_starred': bool(row['is_starred']),
+                    'taken_at': row['taken_at'],
+                    'width': row['width'],
+                    'height': row['height']
+                }
+            })
+
+        conn.close()
+
+        return {
+            'clusters': clusters,
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page
+        }
+
+    except sqlite3.OperationalError:
+        # Database exists but tables not created yet
+        return {
+            'clusters': [],
+            'total': 0,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': 0
+        }
 
 
 @app.get("/api/clusters/{cluster_id}/photos")
@@ -453,109 +794,6 @@ def serve_image(
     )
 
 
-@app.get("/api/persons")
-def get_persons():
-    """Get all detected persons with photo counts."""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT p.id, p.name, p.photo_count, p.thumbnail_face_id,
-               f.photo_id as thumb_photo_id, f.bbox_top, f.bbox_right, f.bbox_bottom, f.bbox_left
-        FROM persons p
-        LEFT JOIN faces f ON p.thumbnail_face_id = f.id
-        WHERE p.photo_count > 0
-        ORDER BY p.photo_count DESC
-    """)
-
-    persons = []
-    for row in cursor.fetchall():
-        persons.append({
-            'id': row['id'],
-            'name': row['name'],
-            'photo_count': row['photo_count'],
-            'thumbnail_face_id': row['thumbnail_face_id'],
-            'thumb_photo_id': row['thumb_photo_id'],
-            'bbox': {
-                'top': row['bbox_top'],
-                'right': row['bbox_right'],
-                'bottom': row['bbox_bottom'],
-                'left': row['bbox_left']
-            } if row['bbox_top'] else None
-        })
-
-    conn.close()
-    return {'persons': persons, 'count': len(persons)}
-
-
-@app.put("/api/persons/{person_id}/name")
-def update_person_name(person_id: int, name: str = Query(...)):
-    """Update person's name."""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("UPDATE persons SET name = ? WHERE id = ?", (name, person_id))
-
-    if cursor.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Person not found")
-
-    conn.commit()
-    conn.close()
-    return {"success": True, "person_id": person_id, "name": name}
-
-
-@app.get("/api/face/{face_id}")
-def get_face_thumbnail(face_id: int, size: int = Query(100, ge=50, le=300)):
-    """Get cropped face thumbnail."""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT f.*, p.filepath
-        FROM faces f
-        JOIN photos p ON f.photo_id = p.id
-        WHERE f.id = ?
-    """, (face_id,))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="Face not found")
-
-    filepath = Path(row['filepath'])
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="Image file not found")
-
-    # Crop and resize face
-    try:
-        with Image.open(filepath) as img:
-            # Add some padding around the face
-            padding = int((row['bbox_bottom'] - row['bbox_top']) * 0.3)
-            left = max(0, row['bbox_left'] - padding)
-            top = max(0, row['bbox_top'] - padding)
-            right = min(img.width, row['bbox_right'] + padding)
-            bottom = min(img.height, row['bbox_bottom'] + padding)
-
-            face_img = img.crop((left, top, right, bottom))
-            face_img = face_img.resize((size, size), Image.Resampling.LANCZOS)
-
-            # Convert to bytes
-            import io
-            buffer = io.BytesIO()
-            face_img.save(buffer, format='JPEG', quality=85)
-            buffer.seek(0)
-
-            return Response(
-                content=buffer.getvalue(),
-                media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=604800"}
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing face: {e}")
-
-
 @app.get("/api/export/starred")
 def export_starred_list(min_rating: int = 3):
     """Get list of starred/high-rated photos for export."""
@@ -596,13 +834,39 @@ if __name__ == "__main__":
     print("="*50)
     print("PicBest - SMART PHOTO CURATOR")
     print("="*50)
-    print(f"Database: {DB_PATH}")
+    print(f"Base directory: {BASE_DIR}")
     print(f"Static files: {STATIC_DIR}")
     print()
 
-    if not DB_PATH.exists():
-        print("⚠ Database not found! Run 'python index_photos.py' first.")
-        exit(1)
+    # Create necessary directories
+    print("Initializing directories...")
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    (THUMB_DIR / "400").mkdir(exist_ok=True)
+    (THUMB_DIR / "1200").mkdir(exist_ok=True)
+    print(f"  ✓ Thumbnails: {THUMB_DIR}")
+
+    # Initialize database schema
+    print("Initializing database...")
+    try:
+        init_database()
+        print(f"  ✓ Database: {_current_db_path}")
+    except Exception as e:
+        print(f"  ⚠ Database init failed: {e}")
+
+    print()
+
+    # List available databases (but don't exit if none exist)
+    dbs = get_available_databases()
+    if dbs:
+        print(f"Found {len(dbs)} database(s):")
+        for db in dbs:
+            marker = "✓" if db['active'] else " "
+            size_mb = db['size'] / (1024 * 1024)
+            print(f"  [{marker}] {db['name']} ({size_mb:.1f} MB)")
+    else:
+        print("No photo databases found yet.")
+        print("Use the web UI to browse and index photos.")
+    print()
 
     print("Starting server at http://localhost:8000")
     print("Press Ctrl+C to stop")

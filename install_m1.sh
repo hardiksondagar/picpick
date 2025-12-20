@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # PicBest Installation Script for Apple Silicon (M1/M2/M3)
-# This script handles dlib's special requirements on ARM Macs
 
 set -e  # Exit on error
 
@@ -27,7 +26,7 @@ if [[ "$ARCH" != "arm64" ]]; then
     fi
 fi
 
-# Check Python 3.11 (required for M1 compatibility with dlib)
+# Check Python 3.11
 echo "📍 Checking Python 3.11..."
 if ! command -v python3.11 &> /dev/null; then
     echo "❌ Python 3.11 not found. Installing..."
@@ -42,7 +41,7 @@ fi
 PYTHON_VERSION=$(python3.11 --version | cut -d' ' -f2)
 echo "   ✓ Using Python $PYTHON_VERSION"
 
-# Check for Xcode Command Line Tools (required for compiling dlib)
+# Check for Xcode Command Line Tools
 echo ""
 echo "📍 Checking Xcode Command Line Tools..."
 if ! xcode-select -p &> /dev/null; then
@@ -66,11 +65,10 @@ else
     echo "   ✓ Homebrew installed"
 fi
 
-# Install system dependencies for dlib
+# Install system dependencies
 echo ""
 echo "📦 Installing system dependencies..."
-echo "   This includes cmake, openblas, and other tools needed for dlib"
-brew install cmake openblas
+brew install cmake
 
 # Create virtual environment with Python 3.11
 echo ""
@@ -96,15 +94,7 @@ echo ""
 echo "⬆️  Upgrading pip..."
 pip install --upgrade pip wheel setuptools
 
-# Install dlib with special M1 configuration
-echo ""
-echo "🔨 Installing dlib (this takes 5-10 minutes)..."
-echo "   Building from source with OpenBLAS optimizations for Apple Silicon..."
-
-# Set SDK path (critical for macOS Sequoia and M1)
-export SDKROOT=$(xcrun --show-sdk-path)
-
-# Install remaining requirements
+# Install requirements
 echo ""
 echo "📦 Installing remaining dependencies..."
 pip install -r requirements.txt
@@ -122,14 +112,6 @@ echo "🧪 Testing installation..."
 python3 << 'EOF'
 import sys
 try:
-    print("   Testing dlib...", end=" ")
-    import dlib
-    print("✓")
-
-    print("   Testing face_recognition...", end=" ")
-    import face_recognition
-    print("✓")
-
     print("   Testing torch...", end=" ")
     import torch
     print(f"✓ (MPS available: {torch.backends.mps.is_available()})")
