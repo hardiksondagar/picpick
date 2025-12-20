@@ -785,17 +785,36 @@ def serve_image(
 
 
 @app.get("/api/export/starred")
-def export_starred_list(min_rating: int = 3):
-    """Get list of starred/high-rated photos for export."""
+def export_starred_list():
+    """Get list of starred photos for export."""
     conn = get_db()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT filepath, filename, folder, rating, is_starred
         FROM photos
-        WHERE rating >= ? OR is_starred = 1
+        WHERE is_starred = 1
         ORDER BY folder, taken_at
-    """, (min_rating,))
+    """)
+
+    photos = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return {"photos": photos, "count": len(photos)}
+
+
+@app.get("/api/export/rejected")
+def export_rejected_list():
+    """Get list of rejected photos for deletion."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT filepath, filename, folder
+        FROM photos
+        WHERE is_rejected = 1
+        ORDER BY folder, taken_at
+    """)
 
     photos = [dict(row) for row in cursor.fetchall()]
     conn.close()

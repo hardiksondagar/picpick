@@ -141,18 +141,6 @@
                                 <span class="text-slate-400">Clusters</span>
                                 <span id="stat-clusters" class="text-slate-100 font-semibold">0</span>
                             </div>
-                            <div class="flex items-center gap-2 h-10 px-3 bg-gradient-subtle rounded-lg border border-accent/30">
-                                <svg class="w-4 h-4 text-accent-light" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                                </svg>
-                                <span id="stat-starred" class="text-accent-light font-semibold">0</span>
-                            </div>
-                            <div class="flex items-center gap-2 h-10 px-3 bg-slate-800/40 rounded-lg border border-red-900/30">
-                                <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                                <span id="stat-rejected" class="text-red-400 font-semibold">0</span>
-                            </div>
                             <div class="flex items-center gap-2 h-10 px-3 bg-gradient-primary rounded-lg border border-primary/30">
                                 <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -181,18 +169,20 @@
 
                             <div class="w-px h-6 bg-slate-700/50"></div>
 
-                            <button id="filter-starred" class="h-10 w-10 flex items-center justify-center bg-transparent border-0 text-slate-400 cursor-pointer transition-all hover:text-accent hover:scale-110" title="Show starred only">
-                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                            <button id="filter-starred" class="h-10 px-3 flex items-center justify-center gap-1.5 bg-transparent border-0 text-slate-400 cursor-pointer transition-all hover:text-green-400 hover:scale-105 rounded-lg hover:bg-green-500/10" title="Show selected only">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
                                 </svg>
+                                <span id="stat-starred" class="text-xs font-semibold">0</span>
                             </button>
 
                             <div class="w-px h-6 bg-slate-700/50"></div>
 
-                            <button id="filter-rejected" class="h-10 w-10 flex items-center justify-center bg-transparent border-0 text-slate-400 cursor-pointer transition-all hover:text-red-400 hover:scale-110" title="Show rejected only">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            <button id="filter-rejected" class="h-10 px-3 flex items-center justify-center gap-1.5 bg-transparent border-0 text-slate-400 cursor-pointer transition-all hover:text-red-400 hover:scale-105 rounded-lg hover:bg-red-500/10" title="Show rejected only">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
                                 </svg>
+                                <span id="stat-rejected" class="text-xs font-semibold">0</span>
                             </button>
                         </div>
 
@@ -221,7 +211,7 @@
                                         </div>
                                     </div>
                                     <div class="flex items-center justify-between">
-                                        <span class="text-xs text-slate-400">Star photo</span>
+                                        <span class="text-xs text-slate-400">Select photo</span>
                                         <div class="flex items-center gap-1">
                                             <kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-[10px] font-mono text-slate-300 border border-slate-600">S</kbd>
                                             <span class="text-[10px] text-slate-500">/</span>
@@ -239,6 +229,14 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Export Button -->
+                        <button id="export-btn" class="h-10 px-4 flex items-center gap-2 bg-gradient-primary hover:shadow-glow rounded-xl text-white font-semibold transition-all hover:scale-105" title="Export selections">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            <span>Export</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -335,8 +333,18 @@
                     </div>
 
                     <div class="flex gap-3">
-                        <button id="modal-star-toggle" class="flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-accent hover:bg-gradient-primary hover:shadow-glow transition-all">☆ Star</button>
-                        <button id="modal-reject-toggle" class="flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-red-400 hover:bg-red-600 hover:shadow-glow transition-all">✕ Reject</button>
+                        <button id="modal-star-toggle" class="flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-green-400 hover:bg-green-600 hover:shadow-glow transition-all flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span>Select</span>
+                        </button>
+                        <button id="modal-reject-toggle" class="flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-red-400 hover:bg-red-600 hover:shadow-glow transition-all flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            <span>Reject</span>
+                        </button>
                     </div>
 
                     <div>
@@ -344,6 +352,42 @@
                         <div id="cluster-grid" class="grid grid-cols-3 gap-2.5">
                             <!-- Cluster photos loaded dynamically -->
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Export Modal -->
+        <div id="export-modal" class="hidden fixed inset-0 z-[9999] items-center justify-center p-4 lg:p-6 animate-fade-in">
+            <div class="modal-backdrop absolute inset-0 bg-slate-950/95 backdrop-blur-md"></div>
+            <div class="relative bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-slate-700/50 max-w-2xl w-full p-6 lg:p-8 animate-scale-in">
+                <button id="export-modal-close" class="absolute top-4 right-4 lg:top-6 lg:right-6 w-10 h-10 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-2xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">×</button>
+
+                <h2 class="text-3xl lg:text-4xl font-bold text-gradient mb-6 tracking-tight">Export Photos</h2>
+
+                <div class="space-y-6">
+                    <!-- Export Options -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <button id="export-starred-btn" class="p-6 bg-gradient-subtle border-2 border-accent/30 rounded-2xl hover:border-accent hover:shadow-glow-accent transition-all group">
+                            <svg class="w-8 h-8 text-accent-light mb-3 mx-auto" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                            </svg>
+                            <h3 class="font-bold text-lg text-slate-100 mb-1">Starred Photos</h3>
+                            <p class="text-sm text-slate-400">Copy <span id="starred-count" class="text-accent-light font-semibold">0</span> starred photos</p>
+                        </button>
+
+                        <button id="export-rejected-btn" class="p-6 bg-slate-800/40 border-2 border-red-900/30 rounded-2xl hover:border-red-400 hover:shadow-glow transition-all group">
+                            <svg class="w-8 h-8 text-red-400 mb-3 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            <h3 class="font-bold text-lg text-slate-100 mb-1">Delete Rejected</h3>
+                            <p class="text-sm text-slate-400">Move <span id="rejected-count" class="text-red-400 font-semibold">0</span> rejected to trash</p>
+                        </button>
+                    </div>
+
+                    <!-- Export Results -->
+                    <div id="export-results" class="hidden p-4 bg-slate-900/60 border border-slate-700/50 rounded-xl">
+                        <div id="export-message" class="text-sm text-slate-300"></div>
                     </div>
                 </div>
             </div>

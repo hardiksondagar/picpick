@@ -154,6 +154,17 @@ const elements = {
     helpBtn: document.getElementById('help-btn'),
     helpTooltip: document.getElementById('help-tooltip'),
 
+    // Export
+    exportBtn: document.getElementById('export-btn'),
+    exportModal: document.getElementById('export-modal'),
+    exportModalClose: document.getElementById('export-modal-close'),
+    exportStarredBtn: document.getElementById('export-starred-btn'),
+    exportRejectedBtn: document.getElementById('export-rejected-btn'),
+    exportResults: document.getElementById('export-results'),
+    exportMessage: document.getElementById('export-message'),
+    starredCount: document.getElementById('starred-count'),
+    rejectedCount: document.getElementById('rejected-count'),
+
     // Modal
     modal: document.getElementById('photo-modal'),
     modalImage: document.getElementById('modal-image'),
@@ -222,7 +233,19 @@ function createPhotoCard(cluster, index) {
         : '';
 
     const starBadge = photo.is_starred
-        ? '<div class="absolute top-3 left-3 text-2xl filter drop-shadow-lg animate-star-pulse">★</div>'
+        ? `<div class="absolute top-3 left-3 w-8 h-8 bg-green-600 border-2 border-green-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
+            </svg>
+           </div>`
+        : '';
+
+    const rejectBadge = photo.is_rejected
+        ? `<div class="absolute top-3 left-3 w-8 h-8 bg-red-600 border-2 border-red-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
+            </svg>
+           </div>`
         : '';
 
     card.innerHTML = `
@@ -230,6 +253,7 @@ function createPhotoCard(cluster, index) {
         <div class="photo-card-overlay absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-transparent opacity-0 transition-opacity duration-200"></div>
         ${clusterBadge}
         ${starBadge}
+        ${rejectBadge}
         <div class="photo-card-info absolute bottom-0 left-0 right-0 p-4 transform translate-y-full transition-transform duration-200">
             <div class="text-sm font-semibold text-white mb-1 truncate">${photo.filename}</div>
             <div class="text-xs text-slate-400">${photo.folder}</div>
@@ -356,7 +380,25 @@ async function openModal(clusterIndex) {
     // Load cluster photos
     const data = await api.getClusterPhotos(cluster.cluster_id);
     state.clusterPhotos = data.photos;
-    state.currentPhotoIndex = 0;
+
+    // Find the photo index that matches the current filter
+    let startIndex = 0;
+
+    if (state.starredOnly) {
+        // Find first starred photo in cluster
+        startIndex = state.clusterPhotos.findIndex(p => p.is_starred);
+        if (startIndex === -1) startIndex = 0; // Fallback if none found
+    } else if (state.rejectedOnly) {
+        // Find first rejected photo in cluster
+        startIndex = state.clusterPhotos.findIndex(p => p.is_rejected);
+        if (startIndex === -1) startIndex = 0; // Fallback if none found
+    } else {
+        // No filter - open to representative photo if possible
+        startIndex = state.clusterPhotos.findIndex(p => p.is_representative);
+        if (startIndex === -1) startIndex = 0; // Fallback to first photo
+    }
+
+    state.currentPhotoIndex = startIndex;
 
     state.modalOpen = true;
     elements.modal.classList.remove('hidden');
@@ -398,22 +440,42 @@ function renderModalContent() {
         elements.modalExif.classList.add('hidden');
     }
 
-    // Star toggle
+    // Star toggle (Select)
     if (photo.is_starred) {
-        elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-amber-400 rounded-xl text-white font-bold transition-all';
-        elements.modalStarToggle.textContent = '★ Starred';
+        elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-green-600 border-2 border-green-500 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2';
+        elements.modalStarToggle.innerHTML = `
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
+            </svg>
+            <span>Selected</span>
+        `;
     } else {
-        elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-accent hover:bg-gradient-primary hover:shadow-glow transition-all';
-        elements.modalStarToggle.textContent = '☆ Star';
+        elements.modalStarToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-green-400 hover:bg-green-600 hover:shadow-glow transition-all flex items-center justify-center gap-2';
+        elements.modalStarToggle.innerHTML = `
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
+            </svg>
+            <span>Select</span>
+        `;
     }
 
     // Reject toggle
     if (photo.is_rejected) {
-        elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-red-600 border-2 border-red-500 rounded-xl text-white font-bold transition-all';
-        elements.modalRejectToggle.textContent = '✕ Rejected';
+        elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-red-600 border-2 border-red-500 rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2';
+        elements.modalRejectToggle.innerHTML = `
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
+            </svg>
+            <span>Rejected</span>
+        `;
     } else {
-        elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-red-400 hover:bg-red-600 hover:shadow-glow transition-all';
-        elements.modalRejectToggle.textContent = '✕ Reject';
+        elements.modalRejectToggle.className = 'flex-1 px-5 py-3.5 bg-slate-700/50 border-2 border-slate-600/50 rounded-xl text-slate-100 font-bold hover:border-red-400 hover:bg-red-600 hover:shadow-glow transition-all flex items-center justify-center gap-2';
+        elements.modalRejectToggle.innerHTML = `
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
+            </svg>
+            <span>Reject</span>
+        `;
     }
 
     // Update cluster thumbnail selection
@@ -470,43 +532,47 @@ function renderClusterThumbnails() {
         thumb.dataset.index = i;
         thumb.dataset.photoId = photo.id;
 
-        const starClasses = photo.is_starred
-            ? 'bg-amber-400 text-white scale-110'
-            : 'bg-slate-900/80 backdrop-blur-sm text-slate-400 hover:bg-amber-400 hover:text-white hover:scale-110';
+        // Show selected badge (green thumb up) or rejected badge (red thumb down)
+        let badge = '';
+        if (photo.is_starred) {
+            badge = `
+                <div class="absolute top-1 right-1 w-7 h-7 bg-green-600 border border-green-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 0 1 2.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 0 0 .322-1.672V2.75a.75.75 0 0 1 .75-.75 2.25 2.25 0 0 1 2.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 0 1-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 0 0-1.423-.23H5.904m10.598-9.75H14.25M5.904 18.5c.083.205.173.405.27.602.197.4-.078.898-.523.898h-.908c-.889 0-1.713-.518-1.972-1.368a12 12 0 0 1-.521-3.507c0-1.553.295-3.036.831-4.398C3.387 9.953 4.167 9.5 5.015 9.5h1.053c.472 0 .745.556.5.96a8.958 8.958 0 0 0-1.302 4.665c0 1.194.232 2.333.654 3.375Z" />
+                    </svg>
+                </div>
+            `;
+        } else if (photo.is_rejected) {
+            badge = `
+                <div class="absolute top-1 right-1 w-7 h-7 bg-red-600 border border-red-400 rounded-full flex items-center justify-center filter drop-shadow-lg">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715a12.137 12.137 0 0 1-.068-1.285c0-2.848.992-5.464 2.649-7.521C5.287 4.247 5.886 4 6.504 4h4.016a4.5 4.5 0 0 1 1.423.23l3.114 1.04a4.5 4.5 0 0 0 1.423.23h1.294M7.498 15.25c.618 0 .991.724.725 1.282A7.471 7.471 0 0 0 7.5 19.75 2.25 2.25 0 0 0 9.75 22a.75.75 0 0 0 .75-.75v-.633c0-.573.11-1.14.322-1.672.304-.76.93-1.33 1.653-1.715a9.04 9.04 0 0 0 2.86-2.4c.498-.634 1.226-1.08 2.032-1.08h.384m-10.253 1.5H9.7m8.075-9.75c.01.05.027.1.05.148.593 1.2.925 2.55.925 3.977 0 1.487-.36 2.89-.999 4.125m.023-8.25c-.076-.365.183-.75.575-.75h.908c.889 0 1.713.518 1.972 1.368.339 1.11.521 2.287.521 3.507 0 1.553-.295 3.036-.831 4.398-.306.774-1.086 1.227-1.934 1.227h-1.053c-.472 0-.745-.556-.5-.96a8.95 8.95 0 0 0 .303-.54" />
+                    </svg>
+                </div>
+            `;
+        }
 
         thumb.innerHTML = `
             <img src="/api/image/${photo.id}?w=400" alt="" loading="lazy" class="w-full h-full object-cover">
-            <button class="thumb-star-btn absolute top-1 right-1 w-6 h-6 rounded-full border-none flex items-center justify-center text-sm cursor-pointer transition-all ${starClasses}" data-photo-id="${photo.id}">★</button>
+            ${badge}
         `;
 
         // Click image to select - use dataset.index or photo ID to ensure correct photo
         thumb.addEventListener('click', (e) => {
-            if (!e.target.closest('.thumb-star-btn')) {
-                const clickedIndex = parseInt(thumb.dataset.index);
-                const photoId = parseInt(thumb.dataset.photoId);
+            const clickedIndex = parseInt(thumb.dataset.index);
+            const photoId = parseInt(thumb.dataset.photoId);
 
-                // Verify index is valid, or find by photo ID as fallback
-                let targetIndex = clickedIndex;
-                if (clickedIndex < 0 || clickedIndex >= state.clusterPhotos.length ||
-                    state.clusterPhotos[clickedIndex]?.id !== photoId) {
-                    // Index mismatch, find by photo ID
-                    targetIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
-                }
-
-                if (targetIndex >= 0 && targetIndex < state.clusterPhotos.length) {
-                    state.currentPhotoIndex = targetIndex;
-                    renderModalContent();
-                }
+            // Verify index is valid, or find by photo ID as fallback
+            let targetIndex = clickedIndex;
+            if (clickedIndex < 0 || clickedIndex >= state.clusterPhotos.length ||
+                state.clusterPhotos[clickedIndex]?.id !== photoId) {
+                // Index mismatch, find by photo ID
+                targetIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
             }
-        });
 
-        // Click star to toggle - use photo ID to find correct index
-        thumb.querySelector('.thumb-star-btn').addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const photoId = parseInt(e.target.dataset.photoId);
-            const photoIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
-            if (photoIndex >= 0) {
-                await toggleClusterPhotoStar(photoIndex);
+            if (targetIndex >= 0 && targetIndex < state.clusterPhotos.length) {
+                state.currentPhotoIndex = targetIndex;
+                renderModalContent();
             }
         });
 
@@ -526,17 +592,6 @@ function updateClusterThumbnailSelection() {
         } else {
             thumb.classList.remove('ring-2', 'ring-primary');
         }
-
-        // Update star button state
-        const photo = state.clusterPhotos[i];
-        const btn = thumb.querySelector('.thumb-star-btn');
-        if (btn && photo) {
-            if (photo.is_starred) {
-                btn.className = 'thumb-star-btn absolute top-1 right-1 w-6 h-6 rounded-full border-none flex items-center justify-center text-sm cursor-pointer transition-all bg-amber-400 text-white scale-110';
-            } else {
-                btn.className = 'thumb-star-btn absolute top-1 right-1 w-6 h-6 rounded-full border-none flex items-center justify-center text-sm cursor-pointer transition-all bg-slate-900/80 backdrop-blur-sm text-slate-400 hover:bg-amber-400 hover:text-white hover:scale-110';
-            }
-        }
     });
     scrollToSelectedThumb();
 }
@@ -546,42 +601,6 @@ function scrollToSelectedThumb() {
     if (selected) {
         selected.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-}
-
-async function toggleClusterPhotoStar(photoIndex) {
-    const photo = state.clusterPhotos[photoIndex];
-    if (!photo) return;
-
-    const newValue = !photo.is_starred;
-    await api.updateStar(photo.id, newValue);
-    photo.is_starred = newValue;
-
-    // Update the cluster representative if needed
-    const cluster = state.clusters[state.currentClusterIndex];
-    if (cluster && cluster.representative.id === photo.id) {
-        cluster.representative.is_starred = newValue;
-        updateCardInGrid(state.currentClusterIndex);
-    }
-
-    // Update the star button in this thumb
-    const thumb = elements.clusterGrid.querySelector(`[data-index="${photoIndex}"]`);
-    if (thumb) {
-        const btn = thumb.querySelector('.thumb-star-btn');
-        btn.classList.toggle('starred', newValue);
-    }
-
-    // Update main star toggle if this is selected photo
-    if (photoIndex === state.currentPhotoIndex) {
-        if (newValue) {
-            elements.modalStarToggle.className = 'w-full px-4 py-3 bg-gradient-to-r from-amber-400 to-pink-500 border-2 border-amber-400 rounded-xl text-white font-semibold transition-all';
-            elements.modalStarToggle.textContent = '★ Starred';
-        } else {
-            elements.modalStarToggle.className = 'w-full px-4 py-3 bg-slate-700 border-2 border-slate-600 rounded-xl text-slate-100 font-semibold hover:border-amber-400 transition-all';
-            elements.modalStarToggle.textContent = '☆ Star';
-        }
-    }
-
-    refreshStats();
 }
 
 function navigateModal(direction) {
@@ -624,14 +643,22 @@ async function toggleStar() {
     await api.updateStar(photo.id, newValue);
     photo.is_starred = newValue;
 
+    // If starring, un-reject
+    if (newValue && photo.is_rejected) {
+        await api.updateReject(photo.id, false);
+        photo.is_rejected = false;
+    }
+
     // Update cluster representative if this is the rep
     const cluster = state.clusters[state.currentClusterIndex];
     if (cluster && cluster.representative.id === photo.id) {
         cluster.representative.is_starred = newValue;
+        cluster.representative.is_rejected = photo.is_rejected;
         updateCardInGrid(state.currentClusterIndex);
     }
 
     renderModalContent();
+    renderClusterThumbnails(); // Update thumbnail badges
     refreshStats();
 }
 
@@ -643,14 +670,22 @@ async function toggleReject() {
     await api.updateReject(photo.id, newValue);
     photo.is_rejected = newValue;
 
+    // If rejecting, un-star
+    if (newValue && photo.is_starred) {
+        await api.updateStar(photo.id, false);
+        photo.is_starred = false;
+    }
+
     // Update cluster representative if this is the rep
     const cluster = state.clusters[state.currentClusterIndex];
     if (cluster && cluster.representative.id === photo.id) {
         cluster.representative.is_rejected = newValue;
+        cluster.representative.is_starred = photo.is_starred;
         updateCardInGrid(state.currentClusterIndex);
     }
 
     renderModalContent();
+    renderClusterThumbnails(); // Update thumbnail badges
     refreshStats();
 }
 
@@ -790,13 +825,13 @@ function setupEventListeners() {
         state.starredOnly = !state.starredOnly;
         if (state.starredOnly) {
             state.rejectedOnly = false; // Can't show both
-            elements.filterRejected.classList.remove('text-red-400', 'scale-110', 'rotate-12');
+            elements.filterRejected.classList.remove('text-red-400', 'bg-red-500/10');
             elements.filterRejected.classList.add('text-slate-400');
 
             elements.filterStarred.classList.remove('text-slate-400');
-            elements.filterStarred.classList.add('text-accent', 'scale-110', 'rotate-12');
+            elements.filterStarred.classList.add('text-green-400', 'bg-green-500/10');
         } else {
-            elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
+            elements.filterStarred.classList.remove('text-green-400', 'bg-green-500/10');
             elements.filterStarred.classList.add('text-slate-400');
         }
         resetAndLoad();
@@ -806,13 +841,13 @@ function setupEventListeners() {
         state.rejectedOnly = !state.rejectedOnly;
         if (state.rejectedOnly) {
             state.starredOnly = false; // Can't show both
-            elements.filterStarred.classList.remove('text-accent', 'scale-110', 'rotate-12');
+            elements.filterStarred.classList.remove('text-green-400', 'bg-green-500/10');
             elements.filterStarred.classList.add('text-slate-400');
 
             elements.filterRejected.classList.remove('text-slate-400');
-            elements.filterRejected.classList.add('text-red-400', 'scale-110', 'rotate-12');
+            elements.filterRejected.classList.add('text-red-400', 'bg-red-500/10');
         } else {
-            elements.filterRejected.classList.remove('text-red-400', 'scale-110', 'rotate-12');
+            elements.filterRejected.classList.remove('text-red-400', 'bg-red-500/10');
             elements.filterRejected.classList.add('text-slate-400');
         }
         resetAndLoad();
@@ -829,11 +864,113 @@ function setupEventListeners() {
 
         // Close help tooltip when clicking outside
         document.addEventListener('click', (e) => {
-            if (helpContainer && !helpContainer.contains(e.target)) {
+            if (!helpContainer.contains(e.target)) {
                 elements.helpTooltip.classList.add('hidden');
             }
         });
     }
+
+    // Export button
+    elements.exportBtn.addEventListener('click', () => {
+        elements.exportModal.classList.remove('hidden');
+        elements.exportModal.classList.add('flex');
+        elements.starredCount.textContent = state.stats.starred_photos || 0;
+        elements.rejectedCount.textContent = state.stats.rejected_photos || 0;
+        elements.exportResults.classList.add('hidden');
+    });
+
+    elements.exportModalClose.addEventListener('click', () => {
+        elements.exportModal.classList.add('hidden');
+        elements.exportModal.classList.remove('flex');
+    });
+
+    elements.exportModal.querySelector('.modal-backdrop').addEventListener('click', () => {
+        elements.exportModal.classList.add('hidden');
+        elements.exportModal.classList.remove('flex');
+    });
+
+    // Export starred photos
+    elements.exportStarredBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/export/starred');
+            const data = await response.json();
+
+            if (data.photos && data.photos.length > 0) {
+                // Create a text file with the list
+                const content = data.photos.map(p => p.filepath).join('\n');
+                const blob = new Blob([content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `starred-photos-${new Date().toISOString().split('T')[0]}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                elements.exportResults.classList.remove('hidden');
+                elements.exportMessage.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <svg class="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div>
+                            <p class="font-semibold text-slate-100 mb-1">Export Successful!</p>
+                            <p class="text-xs text-slate-400">Downloaded list of ${data.count} starred photos.</p>
+                            <p class="text-xs text-slate-500 mt-2">Use this file to copy photos with: <code class="bg-slate-800 px-1.5 py-0.5 rounded">rsync --files-from=starred-photos.txt</code></p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                elements.exportResults.classList.remove('hidden');
+                elements.exportMessage.innerHTML = '<p class="text-slate-400">No starred photos to export.</p>';
+            }
+        } catch (err) {
+            console.error('Export failed:', err);
+            elements.exportResults.classList.remove('hidden');
+            elements.exportMessage.innerHTML = '<p class="text-red-400">Export failed. Please try again.</p>';
+        }
+    });
+
+    // Export rejected photos (show script to delete)
+    elements.exportRejectedBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/export/rejected');
+            const data = await response.json();
+
+            if (data.photos && data.photos.length > 0) {
+                // Create a shell script to delete rejected photos
+                const content = '#!/bin/bash\n# Delete rejected photos\n\n' +
+                    data.photos.map(p => `rm "${p.filepath}"`).join('\n');
+                const blob = new Blob([content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `delete-rejected-${new Date().toISOString().split('T')[0]}.sh`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+                elements.exportResults.classList.remove('hidden');
+                elements.exportMessage.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <svg class="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div>
+                            <p class="font-semibold text-slate-100 mb-1">Script Downloaded</p>
+                            <p class="text-xs text-slate-400">Downloaded script to delete ${data.count} rejected photos.</p>
+                            <p class="text-xs text-slate-500 mt-2"><strong>⚠️ Review before running:</strong> <code class="bg-slate-800 px-1.5 py-0.5 rounded">chmod +x delete-rejected.sh && ./delete-rejected.sh</code></p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                elements.exportResults.classList.remove('hidden');
+                elements.exportMessage.innerHTML = '<p class="text-slate-400">No rejected photos to delete.</p>';
+            }
+        } catch (err) {
+            console.error('Export failed:', err);
+            elements.exportResults.classList.remove('hidden');
+            elements.exportMessage.innerHTML = '<p class="text-red-400">Export failed. Please try again.</p>';
+        }
+    });
 
     // Modal controls
     elements.modalClose.addEventListener('click', closeModal);
