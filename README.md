@@ -48,42 +48,73 @@ PicBest uses **AI-powered clustering** and **face recognition** to organize your
 
 ### Prerequisites
 
-- Python 3.11+
+- **macOS (Apple Silicon M1/M2/M3)** - See [Other Platforms](#other-platforms) below
+- Python 3.11
 - ~8GB RAM (for AI models)
 - Your photos in a folder
 
-### Installation
+### Installation (macOS Apple Silicon)
 
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/PicBest.git
 cd PicBest
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# For face recognition (optional, requires cmake)
-brew install cmake  # macOS
-pip install face_recognition
+# Run the automated installer
+./install_m1.sh
 ```
+
+The script will:
+- ✅ Check and install Python 3.11
+- ✅ Install Xcode Command Line Tools (if needed)
+- ✅ Install Homebrew dependencies (cmake, openblas)
+- ✅ Create virtual environment
+- ✅ Build dlib with M1 optimizations
+- ✅ Install all Python packages
+- ✅ Test everything works
+
+**Time:** ~10-15 minutes (dlib compilation takes the longest)
+
+### Other Platforms
+
+<details>
+<summary>Linux / Intel Mac / Windows</summary>
+
+```bash
+# Create virtual environment
+python3.11 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get install cmake build-essential
+
+# Install Python packages
+pip install -r requirements.txt
+```
+
+**Note:** dlib installation varies by platform. See [dlib installation guide](http://dlib.net/compile.html) if you encounter issues.
+
+</details>
 
 ### Usage
 
-#### Step 1: Add Your Photos
+#### Step 1: Activate Environment
+
+```bash
+source venv/bin/activate
+```
+
+#### Step 2: Add Your Photos
 
 ```bash
 # Option A: Copy/symlink photos to the default folder
-mkdir photos
+mkdir -p photos
 cp -r /path/to/your/photos/* ./photos/
 # or symlink:
 ln -s /path/to/your/photos ./photos
 ```
 
-#### Step 2: Index Your Photos
+#### Step 3: Index Your Photos
 
 ```bash
 # Run indexer (uses ./photos by default)
@@ -102,7 +133,7 @@ python index_photos.py --base-dir /path/to/your/photos
 
 **First run takes ~30-60 minutes** for 5000 photos (subsequent runs are faster).
 
-#### Step 3: Launch the Web UI
+#### Step 4: Launch the Web UI
 
 ```bash
 python server.py
@@ -110,7 +141,7 @@ python server.py
 
 Open **http://localhost:8000** in your browser.
 
-#### Step 4: Review & Star Photos
+#### Step 5: Review & Star Photos
 
 | Action | Keyboard | Mouse |
 |--------|----------|-------|
@@ -119,7 +150,7 @@ Open **http://localhost:8000** in your browser.
 | Star/unstar | `S` or `Space` | Click ★ button |
 | Close modal | `Esc` | Click × |
 
-#### Step 5: Export Starred Photos
+#### Step 6: Export Starred Photos
 
 ```bash
 python export_starred.py --output /path/to/album/folder
@@ -128,6 +159,38 @@ python export_starred.py --output /path/to/album/folder
 #   --copy          Copy files (default)
 #   --move          Move files instead
 #   --organize      Organize by date folders
+```
+
+---
+
+## 🔧 Troubleshooting
+
+### dlib Installation Issues (M1 Mac)
+
+If `install_m1.sh` fails with dlib errors:
+
+```bash
+# Make sure you have Python 3.11
+brew install python@3.11
+
+# Install system dependencies
+brew install cmake openblas
+
+# Set SDK path and install manually
+export SDKROOT=$(xcrun --show-sdk-path)
+pip install dlib
+```
+
+### Face Recognition Not Working
+
+Check `face_detection.log` for errors. Face detection requires dlib to be properly installed.
+
+### Out of Memory
+
+Reduce batch size in `index_photos.py`:
+
+```python
+BATCH_SIZE = 32  # Reduce to 16 or 8 if needed
 ```
 
 ---
