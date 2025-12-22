@@ -15,10 +15,15 @@ import os
 import signal
 import time
 from datetime import datetime
+import uuid
+import shutil
+import zipfile
+import io
+import threading
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from PIL import Image, ImageOps
 import uvicorn
@@ -46,6 +51,10 @@ ALLOWED_BASE_PATHS = [
 ]
 
 app = FastAPI(title="PicBest")
+
+# Export job management
+export_jobs = {}
+export_jobs_lock = threading.Lock()
 
 
 def get_db():
@@ -232,6 +241,105 @@ def switch_database(db_name: str = Query(...)):
 
     _current_db_path = target_path
     return {'success': True, 'active_database': db_name}
+
+
+@app.get("/api/base-directory")
+def get_base_directory():
+    """Get the base directory used for indexing (inferred from photos)."""
+    if not _current_db_path.exists():
+        return {"base_directory": None}
+
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # First, try to get from indexing_jobs table (most recent completed job)
+        cursor.execute("""
+            SELECT directory
+            FROM indexing_jobs
+            WHERE status = 'complete'
+            ORDER BY completed_at DESC, created_at DESC
+            LIMIT 1
+        """)
+
+        row = cursor.fetchone()
+        if row and row['directory']:
+            conn.close()
+            return {"base_directory": row['directory']}
+
+        # Fallback: infer from photo filepaths
+        # Get a sample of filepaths to infer base directory
+        cursor.execute("""
+            SELECT DISTINCT filepath
+            FROM photos
+            LIMIT 50
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            print("No photos found in database")
+            return {"base_directory": None}
+
+        # Find common parent directory
+        try:
+            paths = []
+            for row in rows:
+                filepath = row['filepath'] if isinstance(row, dict) else row[0]
+                if filepath:
+                    paths.append(Path(filepath))
+
+            if not paths:
+                print("No valid paths found")
+                return {"base_directory": None}
+
+            # Start with first path's parent
+            common_base = paths[0].parent
+            print(f"Starting common_base: {common_base}")
+
+            # Find the common ancestor across all paths
+            for path in paths[1:]:
+                try:
+                    # Find common parts between current common_base and this path's parent
+                    common_parts = []
+                    for p1, p2 in zip(common_base.parts, path.parent.parts):
+                        if p1 == p2:
+                            common_parts.append(p1)
+                        else:
+                            break
+
+                    if common_parts:
+                        common_base = Path(*common_parts)
+                        print(f"Updated common_base: {common_base}")
+                    # If no common parts, keep the current common_base (don't break)
+                except (ValueError, AttributeError) as e:
+                    # Log but continue
+                    print(f"Error comparing paths: {e}")
+                    continue
+
+            result = str(common_base)
+            print(f"Returning base_directory: {result}")
+            return {"base_directory": result}
+        except Exception as e:
+            print(f"Error processing paths: {e}")
+            import traceback
+            traceback.print_exc()
+            # If all else fails, return the parent of the first photo
+            if rows:
+                try:
+                    filepath = rows[0]['filepath'] if isinstance(rows[0], dict) else rows[0][0]
+                    first_path = Path(filepath)
+                    return {"base_directory": str(first_path.parent)}
+                except:
+                    pass
+            return {"base_directory": None}
+
+    except Exception as e:
+        print(f"Error in get_base_directory: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"base_directory": None}
 
 
 @app.get("/api/stats")
@@ -820,6 +928,292 @@ def export_rejected_list():
     conn.close()
 
     return {"photos": photos, "count": len(photos)}
+
+
+# ============== Export Endpoints ==============
+
+class ExportCopyRequest(BaseModel):
+    destination: str
+    include_manifest: bool = True
+
+
+def should_copy(src: Path, dest: Path) -> bool:
+    """Check if file should be copied (deduplication)."""
+    if not dest.exists():
+        return True
+    # Same size = likely same file (fast check)
+    if src.stat().st_size != dest.stat().st_size:
+        return True
+    return False  # Skip - already exported
+
+
+def copy_photos_task(job_id: str, photos: list, destination: Path, include_manifest: bool):
+    """Background task to copy photos with progress tracking."""
+    with export_jobs_lock:
+        export_jobs[job_id] = {
+            "status": "running",
+            "progress": 0,
+            "total": len(photos),
+            "skipped": 0,
+            "copied": 0,
+            "cancelled": False,
+            "destination": str(destination),
+            "error": None
+        }
+
+    destination.mkdir(parents=True, exist_ok=True)
+    manifest_data = []
+
+    try:
+        for i, photo in enumerate(photos):
+            # Check cancellation flag
+            with export_jobs_lock:
+                if export_jobs[job_id]["cancelled"]:
+                    export_jobs[job_id]["status"] = "cancelled"
+                    return
+
+            src_path = Path(photo['filepath'])
+            if not src_path.exists():
+                continue
+
+            # Handle filename collisions by prefixing with folder name if needed
+            dest_filename = photo['filename']
+            dest_path = destination / dest_filename
+
+            # Check if we should copy (deduplication)
+            if should_copy(src_path, dest_path):
+                try:
+                    shutil.copy2(src_path, dest_path)
+                    with export_jobs_lock:
+                        export_jobs[job_id]["copied"] += 1
+                except Exception as e:
+                    with export_jobs_lock:
+                        export_jobs[job_id]["error"] = f"Error copying {photo['filename']}: {str(e)}"
+                        export_jobs[job_id]["status"] = "error"
+                    return
+            else:
+                with export_jobs_lock:
+                    export_jobs[job_id]["skipped"] += 1
+
+            manifest_data.append({
+                "original": photo['filepath'],
+                "filename": photo['filename'],
+                "folder": photo['folder'],
+                "rating": photo.get('rating', 0),
+                "starred": bool(photo.get('is_starred', 0)),
+                "taken_at": photo.get('taken_at')
+            })
+
+            with export_jobs_lock:
+                export_jobs[job_id]["progress"] = i + 1
+
+        # Write manifest.json
+        if include_manifest:
+            with export_jobs_lock:
+                copied_count = export_jobs[job_id]["copied"]
+                skipped_count = export_jobs[job_id]["skipped"]
+
+            manifest_path = destination / "manifest.json"
+            manifest = {
+                "exported_at": datetime.now().isoformat(),
+                "total": len(photos),
+                "copied": copied_count,
+                "skipped": skipped_count,
+                "source_db": str(_current_db_path),
+                "files": manifest_data
+            }
+            with open(manifest_path, 'w') as f:
+                json.dump(manifest, f, indent=2)
+
+        with export_jobs_lock:
+            export_jobs[job_id]["status"] = "complete"
+
+    except Exception as e:
+        with export_jobs_lock:
+            export_jobs[job_id]["status"] = "error"
+            export_jobs[job_id]["error"] = str(e)
+
+
+@app.post("/api/export/copy")
+def start_export_copy(request: ExportCopyRequest, background_tasks: BackgroundTasks):
+    """Start async copy job for selected photos."""
+    # Security check
+    dest_path = Path(request.destination).expanduser()
+    if not is_path_allowed(dest_path):
+        raise HTTPException(status_code=403, detail="Destination path not allowed")
+
+    # Get selected photos
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT filepath, filename, folder, rating, is_starred, taken_at
+        FROM photos
+        WHERE is_starred = 1
+        ORDER BY folder, taken_at, filename
+    """)
+
+    photos = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not photos:
+        raise HTTPException(status_code=400, detail="No selected photos to export")
+
+    # Create job
+    job_id = str(uuid.uuid4())
+
+    # Start background task
+    background_tasks.add_task(copy_photos_task, job_id, photos, dest_path, request.include_manifest)
+
+    return {"job_id": job_id, "total": len(photos)}
+
+
+@app.get("/api/export/status/{job_id}")
+def get_export_status(job_id: str):
+    """Get export job status."""
+    with export_jobs_lock:
+        job = export_jobs.get(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return {
+        "status": job["status"],
+        "progress": job["progress"],
+        "total": job["total"],
+        "skipped": job["skipped"],
+        "copied": job["copied"],
+        "error": job.get("error")
+    }
+
+
+@app.post("/api/export/cancel/{job_id}")
+def cancel_export(job_id: str):
+    """Cancel an export job."""
+    with export_jobs_lock:
+        if job_id not in export_jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        export_jobs[job_id]["cancelled"] = True
+
+    return {"success": True}
+
+
+@app.get("/api/export/filenames")
+def export_filenames():
+    """Export filename list for photographer sharing."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT DISTINCT folder
+        FROM photos
+        WHERE is_starred = 1
+        LIMIT 1
+    """)
+    folder_row = cursor.fetchone()
+    source_folder = folder_row['folder'] if folder_row else "Unknown"
+
+    cursor.execute("""
+        SELECT filename, folder
+        FROM photos
+        WHERE is_starred = 1
+        ORDER BY folder, taken_at, filename
+    """)
+
+    photos = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    # Build text content
+    lines = [
+        "# Selected Photos",
+        f"# Source: {source_folder}",
+        f"# Count: {len(photos)}",
+        f"# Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        ""
+    ]
+
+    for photo in photos:
+        lines.append(photo['filename'])
+
+    content = "\n".join(lines)
+
+    return Response(
+        content=content,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="selected-photos-{datetime.now().strftime("%Y%m%d")}.txt"'
+        }
+    )
+
+
+@app.get("/api/export/xmp")
+def export_xmp():
+    """Export XMP sidecar files as ZIP."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT filename, folder, rating, is_starred
+        FROM photos
+        WHERE is_starred = 1
+        ORDER BY folder, taken_at, filename
+    """)
+
+    photos = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not photos:
+        raise HTTPException(status_code=400, detail="No selected photos to export")
+
+    # Create ZIP in memory
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for photo in photos:
+            # Generate XMP content
+            rating = photo.get('rating', 5) if photo.get('is_starred') else 0
+            xmp_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+      xmp:Rating="{rating}"
+      xmp:Label="Select"/>
+  </rdf:RDF>
+</x:xmpmeta>'''
+
+            # XMP filename is original filename with .xmp extension
+            xmp_filename = Path(photo['filename']).stem + ".xmp"
+            zip_file.writestr(xmp_filename, xmp_content)
+
+    zip_buffer.seek(0)
+
+    return StreamingResponse(
+        io.BytesIO(zip_buffer.read()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="selected-photos-xmp-{datetime.now().strftime("%Y%m%d")}.zip"'
+        }
+    )
+
+
+@app.post("/api/reset-selections")
+def reset_selections():
+    """Reset all starred and rejected flags."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE photos
+        SET is_starred = 0, is_rejected = 0, rating = 0, updated_at = CURRENT_TIMESTAMP
+    """)
+
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "affected": affected}
 
 
 # ============== Static Files ==============

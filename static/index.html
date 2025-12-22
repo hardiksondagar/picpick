@@ -338,30 +338,91 @@
         <!-- Export Modal -->
         <div id="export-modal" class="hidden fixed inset-0 z-[9999] items-center justify-center p-4 lg:p-6 animate-fade-in">
             <div class="modal-backdrop absolute inset-0 bg-slate-950/95 backdrop-blur-md"></div>
-            <div class="relative bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-slate-700/50 max-w-2xl w-full p-6 lg:p-8 animate-scale-in">
+            <div class="relative bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-slate-700/50 max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 lg:p-8 animate-scale-in">
                 <button id="export-modal-close" class="absolute top-4 right-4 lg:top-6 lg:right-6 w-10 h-10 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-2xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">×</button>
 
                 <h2 class="text-3xl lg:text-4xl font-bold text-gradient mb-6 tracking-tight">Export Photos</h2>
 
                 <div class="space-y-6">
-                    <!-- Export Options -->
-                    <div class="grid grid-cols-2 gap-4">
-                        <button id="export-starred-btn" class="p-6 bg-gradient-subtle border-2 border-accent/30 rounded-2xl hover:border-accent hover:shadow-glow-accent transition-all group">
-                            <i class="fa-solid fa-star text-accent-light text-4xl mb-3 mx-auto block"></i>
-                            <h3 class="font-bold text-lg text-slate-100 mb-1">Starred Photos</h3>
-                            <p class="text-sm text-slate-400">Copy <span id="starred-count" class="text-accent-light font-semibold">0</span> starred photos</p>
-                        </button>
+                    <!-- Copy to Folder Section -->
+                    <div class="p-6 bg-slate-900/60 border border-slate-700/50 rounded-2xl">
+                        <div class="flex items-center gap-3 mb-4">
+                            <i class="fa-solid fa-folder text-primary text-2xl"></i>
+                            <h3 class="text-xl font-bold text-slate-100">Copy to Folder</h3>
+                        </div>
 
-                        <button id="export-rejected-btn" class="p-6 bg-slate-800/40 border-2 border-red-900/30 rounded-2xl hover:border-red-400 hover:shadow-glow transition-all group">
-                            <i class="fa-solid fa-trash text-red-400 text-4xl mb-3 mx-auto block"></i>
-                            <h3 class="font-bold text-lg text-slate-100 mb-1">Delete Rejected</h3>
-                            <p class="text-sm text-slate-400">Move <span id="rejected-count" class="text-red-400 font-semibold">0</span> rejected to trash</p>
-                        </button>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-slate-300 mb-2">Destination</label>
+                                <input type="text" id="export-destination" placeholder="Loading..." class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-primary transition-all">
+                            </div>
+
+                            <div class="text-sm text-slate-400">
+                                <span id="export-photo-count" class="font-semibold text-slate-200">0</span> selected photos •
+                                <span id="export-size-estimate" class="font-semibold text-slate-200">~0 GB</span>
+                            </div>
+
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="export-include-manifest" checked class="w-4 h-4 rounded border-slate-600 bg-slate-800 text-primary focus:ring-primary">
+                                <span class="text-sm text-slate-300">Include manifest.json</span>
+                            </label>
+
+                            <!-- Progress Bar -->
+                            <div id="export-progress-section" class="hidden space-y-2">
+                                <div class="flex items-center justify-between text-xs text-slate-400">
+                                    <span id="export-progress-text">0 / 0</span>
+                                    <span id="export-skipped-text" class="text-slate-500"></span>
+                                </div>
+                                <div class="h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                                    <div id="export-progress-bar" class="h-full bg-gradient-primary transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-3">
+                                <button id="export-cancel-btn" class="hidden flex-1 px-6 py-3 bg-slate-700/50 border border-slate-600/50 text-slate-100 rounded-xl font-semibold hover:bg-slate-700 hover:border-slate-600 transition-all">Cancel</button>
+                                <button id="export-start-btn" class="flex-1 px-6 py-3.5 bg-gradient-primary text-white rounded-xl font-bold shadow-glow hover:shadow-glow-accent transition-all">Start Export</button>
+                            </div>
+
+                            <div id="export-result" class="hidden p-4 bg-slate-800/60 border border-slate-700/50 rounded-xl">
+                                <div id="export-result-message" class="text-sm text-slate-300"></div>
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- Export Results -->
-                    <div id="export-results" class="hidden p-4 bg-slate-900/60 border border-slate-700/50 rounded-xl">
-                        <div id="export-message" class="text-sm text-slate-300"></div>
+                    <!-- Share with Photographer Section -->
+                    <div class="p-6 bg-slate-900/60 border border-slate-700/50 rounded-2xl">
+                        <div class="flex items-center gap-3 mb-4">
+                            <i class="fa-solid fa-share-nodes text-accent text-2xl"></i>
+                            <h3 class="text-xl font-bold text-slate-100">Share with Photographer</h3>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <button id="export-filenames-btn" class="p-6 bg-gradient-subtle border-2 border-accent/30 rounded-2xl hover:border-accent hover:shadow-glow-accent transition-all group">
+                                <i class="fa-solid fa-file-lines text-accent-light text-4xl mb-3 mx-auto block"></i>
+                                <h4 class="font-bold text-lg text-slate-100 mb-1">Filename List</h4>
+                                <p class="text-sm text-slate-400">Download .txt</p>
+                            </button>
+
+                            <button id="export-xmp-btn" class="p-6 bg-gradient-subtle border-2 border-accent/30 rounded-2xl hover:border-accent hover:shadow-glow-accent transition-all group">
+                                <i class="fa-solid fa-file-zipper text-accent-light text-4xl mb-3 mx-auto block"></i>
+                                <h4 class="font-bold text-lg text-slate-100 mb-1">XMP Sidecars</h4>
+                                <p class="text-sm text-slate-400">Download .zip</p>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Reset Section -->
+                    <div class="pt-4 border-t border-slate-700/50">
+                        <div class="flex items-center justify-between p-4 bg-slate-900/40 rounded-xl">
+                            <div class="flex items-center gap-3">
+                                <i class="fa-solid fa-rotate-left text-yellow-400 text-xl"></i>
+                                <div>
+                                    <h4 class="font-bold text-slate-100">Reset All Selections</h4>
+                                    <p class="text-xs text-slate-400">Clear all starred and rejected markers</p>
+                                </div>
+                            </div>
+                            <button id="export-reset-btn" class="px-6 py-2.5 bg-yellow-600/20 border border-yellow-600/50 text-yellow-400 rounded-xl font-semibold hover:bg-yellow-600/30 transition-all">Reset...</button>
+                        </div>
                     </div>
                 </div>
             </div>

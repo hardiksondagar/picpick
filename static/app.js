@@ -34,12 +34,7 @@ const state = {
     stats: {},
 
     // Directory browser
-    currentDirectory: null,
-
-    // Indexing
-    indexingActive: false,
-    indexingPollInterval: null,
-    lastSeenPhotoCount: 0
+    currentDirectory: null
 };
 
 // ============================================
@@ -47,8 +42,13 @@ const state = {
 // ============================================
 
 const api = {
-    async getIndexingStatus() {
-        const res = await fetch('/api/index/status');
+    async getBaseDirectory() {
+        const res = await fetch('/api/base-directory');
+        return res.json();
+    },
+
+    async getBaseDirectory() {
+        const res = await fetch('/api/base-directory');
         return res.json();
     },
 
@@ -158,12 +158,21 @@ const elements = {
     exportBtn: document.getElementById('export-btn'),
     exportModal: document.getElementById('export-modal'),
     exportModalClose: document.getElementById('export-modal-close'),
-    exportStarredBtn: document.getElementById('export-starred-btn'),
-    exportRejectedBtn: document.getElementById('export-rejected-btn'),
-    exportResults: document.getElementById('export-results'),
-    exportMessage: document.getElementById('export-message'),
-    starredCount: document.getElementById('starred-count'),
-    rejectedCount: document.getElementById('rejected-count'),
+    exportDestination: document.getElementById('export-destination'),
+    exportPhotoCount: document.getElementById('export-photo-count'),
+    exportSizeEstimate: document.getElementById('export-size-estimate'),
+    exportIncludeManifest: document.getElementById('export-include-manifest'),
+    exportProgressSection: document.getElementById('export-progress-section'),
+    exportProgressText: document.getElementById('export-progress-text'),
+    exportSkippedText: document.getElementById('export-skipped-text'),
+    exportProgressBar: document.getElementById('export-progress-bar'),
+    exportCancelBtn: document.getElementById('export-cancel-btn'),
+    exportStartBtn: document.getElementById('export-start-btn'),
+    exportResult: document.getElementById('export-result'),
+    exportResultMessage: document.getElementById('export-result-message'),
+    exportFilenamesBtn: document.getElementById('export-filenames-btn'),
+    exportXmpBtn: document.getElementById('export-xmp-btn'),
+    exportResetBtn: document.getElementById('export-reset-btn'),
 
     // Modal
     modal: document.getElementById('photo-modal'),
@@ -670,76 +679,6 @@ async function refreshStats() {
 // Directory browser removed - run indexing manually via CLI
 
 // ============================================
-// Indexing Progress Functions
-// ============================================
-
-function startIndexingProgressPoll() {
-    state.indexingActive = true;
-    elements.indexingBanner.classList.remove('hidden');
-    elements.emptyState.classList.add('hidden');
-
-    pollIndexingStatus();
-}
-
-async function pollIndexingStatus() {
-    if (!state.indexingActive) return;
-
-    try {
-        const status = await api.getIndexingStatus();
-
-        if (status.active) {
-            updateIndexingUI(status.progress);
-
-            // Check if new photos have been added
-            const currentStats = await api.getStats();
-            if (currentStats.total_photos > state.lastSeenPhotoCount) {
-                state.lastSeenPhotoCount = currentStats.total_photos;
-                // Reload grid to show new photos
-                await loadClusters(true);
-            }
-
-            // Continue polling
-            state.indexingPollInterval = setTimeout(pollIndexingStatus, 2000);
-        } else {
-            // Indexing complete
-            stopIndexingProgressPoll();
-            await loadClusters(); // Full reload
-            await refreshStats();
-        }
-    } catch (err) {
-        console.error('Failed to poll indexing status:', err);
-        stopIndexingProgressPoll();
-    }
-}
-
-function updateIndexingUI(progress) {
-    const phaseNames = {
-        'starting': '🔄 Starting...',
-        'scanning': '📸 Scanning photos',
-        'embedding': '🧠 Computing embeddings',
-        'clustering': '🔗 Clustering similar photos',
-        'complete': '✅ Complete'
-    };
-
-    elements.indexingPhase.textContent = phaseNames[progress.phase] || progress.phase;
-    elements.indexingProgress.textContent = `${progress.current} / ${progress.total} (${progress.percent}%)`;
-    elements.indexingMessage.textContent = progress.message || '';
-    elements.indexingProgressBar.style.width = `${progress.percent}%`;
-}
-
-function stopIndexingProgressPoll() {
-    state.indexingActive = false;
-    elements.indexingBanner.classList.add('hidden');
-
-    if (state.indexingPollInterval) {
-        clearTimeout(state.indexingPollInterval);
-        state.indexingPollInterval = null;
-    }
-}
-
-// Cancel indexing removed - run indexing manually via CLI
-
-// ============================================
 // Data Loading
 // ============================================
 
@@ -844,100 +783,272 @@ function setupEventListeners() {
     }
 
     // Export button
-    elements.exportBtn.addEventListener('click', () => {
+    elements.exportBtn.addEventListener('click', async () => {
         elements.exportModal.classList.remove('hidden');
         elements.exportModal.classList.add('flex');
-        elements.starredCount.textContent = state.stats.starred_photos || 0;
-        elements.rejectedCount.textContent = state.stats.rejected_photos || 0;
-        elements.exportResults.classList.add('hidden');
+        await updateExportModal();
     });
 
     elements.exportModalClose.addEventListener('click', () => {
-        elements.exportModal.classList.add('hidden');
-        elements.exportModal.classList.remove('flex');
+        closeExportModal();
     });
 
     elements.exportModal.querySelector('.modal-backdrop').addEventListener('click', () => {
-        elements.exportModal.classList.add('hidden');
-        elements.exportModal.classList.remove('flex');
+        closeExportModal();
     });
 
-    // Export starred photos
-    elements.exportStarredBtn.addEventListener('click', async () => {
+    // Export state
+    let currentExportJobId = null;
+    let exportPollInterval = null;
+
+    async function updateExportModal() {
+        const count = state.stats.starred_photos || 0;
+        elements.exportPhotoCount.textContent = count.toLocaleString();
+
+        // Estimate size (rough: 5MB per photo average)
+        const estimatedGB = ((count * 5) / 1024).toFixed(1);
+        elements.exportSizeEstimate.textContent = `~${estimatedGB} GB`;
+
+        // Get base directory and set as default destination
         try {
-            const response = await fetch('/api/export/starred');
-            const data = await response.json();
-
-            if (data.photos && data.photos.length > 0) {
-                // Create a text file with the list
-                const content = data.photos.map(p => p.filepath).join('\n');
-                const blob = new Blob([content], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `starred-photos-${new Date().toISOString().split('T')[0]}.txt`;
-                a.click();
-                URL.revokeObjectURL(url);
-
-                elements.exportResults.classList.remove('hidden');
-                elements.exportMessage.innerHTML = `
-                    <div class="flex items-start gap-3">
-                        <i class="fa-solid fa-circle-check text-green-400 text-xl flex-shrink-0 mt-0.5"></i>
-                        <div>
-                            <p class="font-semibold text-slate-100 mb-1">Export Successful!</p>
-                            <p class="text-xs text-slate-400">Downloaded list of ${data.count} starred photos.</p>
-                            <p class="text-xs text-slate-500 mt-2">Use this file to copy photos with: <code class="bg-slate-800 px-1.5 py-0.5 rounded">rsync --files-from=starred-photos.txt</code></p>
-                        </div>
-                    </div>
-                `;
+            const baseDirData = await api.getBaseDirectory();
+            console.log('Base directory response:', baseDirData);
+            if (baseDirData && baseDirData.base_directory) {
+                const basePath = baseDirData.base_directory;
+                // Set default to base_directory/selected
+                const destination = `${basePath}/selected`;
+                console.log('Setting destination to:', destination);
+                elements.exportDestination.value = destination;
             } else {
-                elements.exportResults.classList.remove('hidden');
-                elements.exportMessage.innerHTML = '<p class="text-slate-400">No starred photos to export.</p>';
+                // Fallback to Desktop if no base directory found
+                console.log('No base directory found, using fallback');
+                elements.exportDestination.value = '~/Desktop/PicBest_Selected';
             }
         } catch (err) {
+            console.error('Failed to get base directory:', err);
+            elements.exportDestination.value = '~/Desktop/PicBest_Selected';
+        }
+
+        // Reset UI state
+        elements.exportProgressSection.classList.add('hidden');
+        elements.exportCancelBtn.classList.add('hidden');
+        elements.exportStartBtn.textContent = 'Start Export';
+        elements.exportResult.classList.add('hidden');
+        currentExportJobId = null;
+    }
+
+    function closeExportModal() {
+        elements.exportModal.classList.add('hidden');
+        elements.exportModal.classList.remove('flex');
+
+        // Cancel any ongoing export
+        if (currentExportJobId) {
+            cancelExport();
+        }
+    }
+
+    // Start export copy
+    elements.exportStartBtn.addEventListener('click', async () => {
+        if (currentExportJobId) {
+            // Already running, cancel it
+            cancelExport();
+            return;
+        }
+
+        const destination = elements.exportDestination.value.trim();
+        if (!destination) {
+            showExportError('Please enter a destination folder');
+            return;
+        }
+
+        const includeManifest = elements.exportIncludeManifest.checked;
+
+        try {
+            const response = await fetch('/api/export/copy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    destination: destination,
+                    include_manifest: includeManifest
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Export failed');
+            }
+
+            const data = await response.json();
+            currentExportJobId = data.job_id;
+
+            // Show progress UI
+            elements.exportProgressSection.classList.remove('hidden');
+            elements.exportCancelBtn.classList.remove('hidden');
+            elements.exportStartBtn.textContent = 'Exporting...';
+            elements.exportResult.classList.add('hidden');
+
+            // Start polling
+            startExportPolling();
+        } catch (err) {
             console.error('Export failed:', err);
-            elements.exportResults.classList.remove('hidden');
-            elements.exportMessage.innerHTML = '<p class="text-red-400">Export failed. Please try again.</p>';
+            showExportError(err.message);
         }
     });
 
-    // Export rejected photos (show script to delete)
-    elements.exportRejectedBtn.addEventListener('click', async () => {
+    // Cancel export
+    elements.exportCancelBtn.addEventListener('click', () => {
+        cancelExport();
+    });
+
+    function cancelExport() {
+        if (currentExportJobId) {
+            fetch(`/api/export/cancel/${currentExportJobId}`, { method: 'POST' });
+        }
+        stopExportPolling();
+        elements.exportProgressSection.classList.add('hidden');
+        elements.exportCancelBtn.classList.add('hidden');
+        elements.exportStartBtn.textContent = 'Start Export';
+        currentExportJobId = null;
+    }
+
+    function startExportPolling() {
+        if (exportPollInterval) return;
+
+        exportPollInterval = setInterval(async () => {
+            if (!currentExportJobId) {
+                stopExportPolling();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/export/status/${currentExportJobId}`);
+                const status = await response.json();
+
+                // Update progress
+                const percent = status.total > 0 ? (status.progress / status.total) * 100 : 0;
+                elements.exportProgressBar.style.width = `${percent}%`;
+                elements.exportProgressText.textContent = `${status.progress} / ${status.total}`;
+
+                if (status.skipped > 0) {
+                    elements.exportSkippedText.textContent = `(${status.skipped} skipped)`;
+                } else {
+                    elements.exportSkippedText.textContent = '';
+                }
+
+                // Check if complete
+                if (status.status === 'complete') {
+                    stopExportPolling();
+                    elements.exportProgressSection.classList.add('hidden');
+                    elements.exportCancelBtn.classList.add('hidden');
+                    elements.exportStartBtn.textContent = 'Start Export';
+
+                    showExportSuccess(status.copied, status.skipped, status.total);
+                    currentExportJobId = null;
+                } else if (status.status === 'cancelled' || status.status === 'error') {
+                    stopExportPolling();
+                    elements.exportProgressSection.classList.add('hidden');
+                    elements.exportCancelBtn.classList.add('hidden');
+                    elements.exportStartBtn.textContent = 'Start Export';
+
+                    if (status.status === 'error') {
+                        showExportError(status.error || 'Export failed');
+                    } else {
+                        showExportError('Export cancelled');
+                    }
+                    currentExportJobId = null;
+                }
+            } catch (err) {
+                console.error('Polling error:', err);
+                stopExportPolling();
+            }
+        }, 1000); // Poll every second
+    }
+
+    function stopExportPolling() {
+        if (exportPollInterval) {
+            clearInterval(exportPollInterval);
+            exportPollInterval = null;
+        }
+    }
+
+    function showExportSuccess(copied, skipped, total) {
+        elements.exportResult.classList.remove('hidden');
+        elements.exportResultMessage.innerHTML = `
+            <div class="flex items-start gap-3">
+                <i class="fa-solid fa-circle-check text-green-400 text-xl flex-shrink-0 mt-0.5"></i>
+                <div>
+                    <p class="font-semibold text-slate-100 mb-1">Export Complete!</p>
+                    <p class="text-xs text-slate-400">Copied ${copied} photos${skipped > 0 ? `, skipped ${skipped} duplicates` : ''} out of ${total} selected.</p>
+                </div>
+            </div>
+        `;
+    }
+
+    function showExportError(message) {
+        elements.exportResult.classList.remove('hidden');
+        elements.exportResultMessage.innerHTML = `
+            <div class="flex items-start gap-3">
+                <i class="fa-solid fa-circle-exclamation text-red-400 text-xl flex-shrink-0 mt-0.5"></i>
+                <div>
+                    <p class="font-semibold text-slate-100 mb-1">Export Failed</p>
+                    <p class="text-xs text-slate-400">${message}</p>
+                </div>
+            </div>
+        `;
+    }
+
+    // Export filenames
+    elements.exportFilenamesBtn.addEventListener('click', async () => {
         try {
-            const response = await fetch('/api/export/rejected');
+            const response = await fetch('/api/export/filenames');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `selected-photos-${new Date().toISOString().split('T')[0]}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Export filenames failed:', err);
+            alert('Failed to export filename list');
+        }
+    });
+
+    // Export XMP
+    elements.exportXmpBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/export/xmp');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `selected-photos-xmp-${new Date().toISOString().split('T')[0]}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Export XMP failed:', err);
+            alert('Failed to export XMP sidecars');
+        }
+    });
+
+    // Reset selections
+    elements.exportResetBtn.addEventListener('click', async () => {
+        const confirmed = confirm('Are you sure you want to reset all selections? This will clear all starred and rejected markers.');
+        if (!confirmed) return;
+
+        try {
+            const response = await fetch('/api/reset-selections', { method: 'POST' });
             const data = await response.json();
 
-            if (data.photos && data.photos.length > 0) {
-                // Create a shell script to delete rejected photos
-                const content = '#!/bin/bash\n# Delete rejected photos\n\n' +
-                    data.photos.map(p => `rm "${p.filepath}"`).join('\n');
-                const blob = new Blob([content], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `delete-rejected-${new Date().toISOString().split('T')[0]}.sh`;
-                a.click();
-                URL.revokeObjectURL(url);
-
-                elements.exportResults.classList.remove('hidden');
-                elements.exportMessage.innerHTML = `
-                    <div class="flex items-start gap-3">
-                        <i class="fa-solid fa-triangle-exclamation text-yellow-400 text-xl flex-shrink-0 mt-0.5"></i>
-                        <div>
-                            <p class="font-semibold text-slate-100 mb-1">Script Downloaded</p>
-                            <p class="text-xs text-slate-400">Downloaded script to delete ${data.count} rejected photos.</p>
-                            <p class="text-xs text-slate-500 mt-2"><strong>⚠️ Review before running:</strong> <code class="bg-slate-800 px-1.5 py-0.5 rounded">chmod +x delete-rejected.sh && ./delete-rejected.sh</code></p>
-                        </div>
-                    </div>
-                `;
-            } else {
-                elements.exportResults.classList.remove('hidden');
-                elements.exportMessage.innerHTML = '<p class="text-slate-400">No rejected photos to delete.</p>';
+            if (data.success) {
+                alert(`Reset complete! Cleared ${data.affected} photos.`);
+                await refreshStats();
+                await resetAndLoad();
+                closeExportModal();
             }
         } catch (err) {
-            console.error('Export failed:', err);
-            elements.exportResults.classList.remove('hidden');
-            elements.exportMessage.innerHTML = '<p class="text-red-400">Export failed. Please try again.</p>';
+            console.error('Reset failed:', err);
+            alert('Failed to reset selections');
         }
     });
 
@@ -1121,13 +1232,6 @@ async function init() {
         elements.emptyState.classList.add('hidden');
         elements.grid.style.display = '';
     }
-
-    // Check if indexing is in progress
-    const indexingStatus = await api.getIndexingStatus();
-    if (indexingStatus.active) {
-        startIndexingProgressPoll();
-    }
-
 
     // Only load clusters if we have photos
     if (state.stats.total_photos > 0) {
