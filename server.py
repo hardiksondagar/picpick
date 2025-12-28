@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PicBest - Smart Photo Curator - Web Server
-FastAPI backend for browsing and rating photos.
+FastAPI backend for browsing photos.
 """
 
 import logging
@@ -158,9 +158,6 @@ def update_indexing_job(job_id: int, **kwargs):
 
 
 # ============== API Models ==============
-
-class PhotoRating(BaseModel):
-    rating: int  # 0-5
 
 class PhotoStar(BaseModel):
     is_starred: bool
@@ -351,11 +348,9 @@ def get_stats():
         return {
             'total_photos': 0,
             'total_clusters': 0,
-            'rated_photos': 0,
             'starred_photos': 0,
             'rejected_photos': 0,
             'keeper_photos': 0,
-            'rating_distribution': {},
             'folders': []
         }
 
@@ -371,26 +366,14 @@ def get_stats():
         cursor.execute("SELECT COUNT(*) as cnt FROM clusters")
         stats['total_clusters'] = cursor.fetchone()['cnt']
 
-        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0 OR is_starred = 1 OR is_rejected = 1")
-        stats['rated_photos'] = cursor.fetchone()['cnt']
-
         cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
         stats['starred_photos'] = cursor.fetchone()['cnt']
 
         cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_rejected = 1")
         stats['rejected_photos'] = cursor.fetchone()['cnt']
 
-        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating >= 3")
+        cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
         stats['keeper_photos'] = cursor.fetchone()['cnt']
-
-        # Rating distribution
-        cursor.execute("""
-            SELECT rating, COUNT(*) as cnt
-            FROM photos
-            GROUP BY rating
-            ORDER BY rating
-        """)
-        stats['rating_distribution'] = {row['rating']: row['cnt'] for row in cursor.fetchall()}
 
         # Folders
         cursor.execute("""
@@ -410,10 +393,9 @@ def get_stats():
         return {
             'total_photos': 0,
             'total_clusters': 0,
-            'rated_photos': 0,
             'starred_photos': 0,
+            'rejected_photos': 0,
             'keeper_photos': 0,
-            'rating_distribution': {},
             'folders': []
         }
 
@@ -423,7 +405,6 @@ def get_clusters(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     folder: Optional[str] = None,
-    min_rating: Optional[int] = None,
     starred_only: bool = False,
     rejected_only: bool = False,
     unrated_only: bool = False
@@ -453,10 +434,6 @@ def get_clusters(
                 conditions.append("p.folder = ?")
                 params.append(folder)
 
-            if min_rating is not None:
-                conditions.append("p.rating >= ?")
-                params.append(min_rating)
-
             if starred_only:
                 conditions.append("p.is_starred = 1")
 
@@ -464,7 +441,7 @@ def get_clusters(
                 conditions.append("p.is_rejected = 1")
 
             if unrated_only:
-                conditions.append("p.rating = 0")
+                conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
 
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -486,7 +463,6 @@ def get_clusters(
                     p.filepath,
                     p.filename,
                     p.folder,
-                    p.rating,
                     p.is_starred,
                     p.is_rejected,
                     p.taken_at,
@@ -519,7 +495,6 @@ def get_clusters(
                         'filepath': row['filepath'],
                         'filename': row['filename'],
                         'folder': row['folder'],
-                        'rating': row['rating'],
                         'is_starred': bool(row['is_starred']),
                         'is_rejected': bool(row['is_rejected']),
                         'taken_at': row['taken_at'],
@@ -547,12 +522,8 @@ def get_clusters(
             conditions.append("p.folder = ?")
             params.append(folder)
 
-        if min_rating is not None:
-            conditions.append("p.rating >= ?")
-            params.append(min_rating)
-
         if unrated_only:
-            conditions.append("p.rating = 0")
+            conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
 
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         join_clause = " ".join(joins) if joins else ""
@@ -580,9 +551,6 @@ def get_clusters(
             if folder:
                 unclustered_conditions.append("p.folder = ?")
 
-            if min_rating is not None:
-                unclustered_conditions.append("p.rating >= ?")
-
             if starred_only:
                 unclustered_conditions.append("p.is_starred = 1")
 
@@ -590,7 +558,7 @@ def get_clusters(
                 unclustered_conditions.append("p.is_rejected = 1")
 
             if unrated_only:
-                unclustered_conditions.append("p.rating = 0")
+                unclustered_conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
 
             unclustered_where = "WHERE " + " AND ".join(unclustered_conditions) if unclustered_conditions else ""
 
@@ -612,7 +580,6 @@ def get_clusters(
                     p.filepath,
                     p.filename,
                     p.folder,
-                    p.rating,
                     p.is_starred,
                     p.is_rejected,
                     p.taken_at,
@@ -636,7 +603,6 @@ def get_clusters(
                         'filepath': row['filepath'],
                         'filename': row['filename'],
                         'folder': row['folder'],
-                        'rating': row['rating'],
                         'is_starred': bool(row['is_starred']),
                         'is_rejected': bool(row['is_rejected']),
                         'taken_at': row['taken_at'],
@@ -665,7 +631,6 @@ def get_clusters(
                 p.filepath,
                 p.filename,
                 p.folder,
-                p.rating,
                 p.is_starred,
                 p.is_rejected,
                 p.taken_at,
@@ -690,7 +655,6 @@ def get_clusters(
                     'filepath': row['filepath'],
                     'filename': row['filename'],
                     'folder': row['folder'],
-                    'rating': row['rating'],
                     'is_starred': bool(row['is_starred']),
                     'is_rejected': bool(row['is_rejected']),
                     'taken_at': row['taken_at'],
@@ -728,7 +692,7 @@ def get_cluster_photos(cluster_id: int):
 
     cursor.execute("""
         SELECT
-            id, filepath, filename, folder, rating, is_starred, is_rejected,
+            id, filepath, filename, folder, is_starred, is_rejected,
             taken_at, width, height, is_cluster_representative, notes, exif_data
         FROM photos
         WHERE cluster_id = ?
@@ -742,7 +706,6 @@ def get_cluster_photos(cluster_id: int):
             'filepath': row['filepath'],
             'filename': row['filename'],
             'folder': row['folder'],
-            'rating': row['rating'],
             'is_starred': bool(row['is_starred']),
             'is_rejected': bool(row['is_rejected']),
             'taken_at': row['taken_at'],
@@ -809,7 +772,7 @@ def get_photo_as_cluster(photo_id: int):
 
     cursor.execute("""
         SELECT
-            id, filepath, filename, folder, rating, is_starred, is_rejected,
+            id, filepath, filename, folder, is_starred, is_rejected,
             taken_at, width, height, is_cluster_representative, notes, exif_data
         FROM photos
         WHERE id = ?
@@ -824,7 +787,6 @@ def get_photo_as_cluster(photo_id: int):
         'filepath': row['filepath'],
         'filename': row['filename'],
         'folder': row['folder'],
-        'rating': row['rating'],
         'is_starred': bool(row['is_starred']),
         'is_rejected': bool(row['is_rejected']),
         'taken_at': row['taken_at'],
@@ -843,31 +805,6 @@ def get_photo_as_cluster(photo_id: int):
 
     conn.close()
     return {'photos': [photo], 'count': 1}
-
-
-@app.put("/api/photos/{photo_id}/rating")
-def update_rating(photo_id: int, data: PhotoRating):
-    """Update photo rating (0-5)."""
-    if not 0 <= data.rating <= 5:
-        raise HTTPException(status_code=400, detail="Rating must be 0-5")
-
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE photos
-        SET rating = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    """, (data.rating, photo_id))
-
-    if cursor.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Photo not found")
-
-    conn.commit()
-    conn.close()
-
-    return {"success": True, "photo_id": photo_id, "rating": data.rating}
 
 
 @app.put("/api/photos/{photo_id}/star")
@@ -934,28 +871,6 @@ def update_notes(photo_id: int, data: PhotoNotes):
     conn.close()
 
     return {"success": True, "photo_id": photo_id}
-
-
-@app.put("/api/clusters/{cluster_id}/rating")
-def update_cluster_rating(cluster_id: int, data: PhotoRating):
-    """Update rating for all photos in a cluster."""
-    if not 0 <= data.rating <= 5:
-        raise HTTPException(status_code=400, detail="Rating must be 0-5")
-
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE photos
-        SET rating = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE cluster_id = ?
-    """, (data.rating, cluster_id))
-
-    affected = cursor.rowcount
-    conn.commit()
-    conn.close()
-
-    return {"success": True, "cluster_id": cluster_id, "rating": data.rating, "affected_photos": affected}
 
 
 def get_thumbnail_path(photo_id: int, width: int) -> Path:
@@ -1051,7 +966,7 @@ def export_starred_list():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT filepath, filename, folder, rating, is_starred
+        SELECT filepath, filename, folder, is_starred
         FROM photos
         WHERE is_starred = 1
         ORDER BY folder, taken_at
@@ -1151,7 +1066,6 @@ def copy_photos_task(job_id: str, photos: list, destination: Path, include_manif
                 "original": photo['filepath'],
                 "filename": photo['filename'],
                 "folder": photo['folder'],
-                "rating": photo.get('rating', 0),
                 "starred": bool(photo.get('is_starred', 0)),
                 "taken_at": photo.get('taken_at')
             })
@@ -1199,7 +1113,7 @@ def start_export_copy(request: ExportCopyRequest, background_tasks: BackgroundTa
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT filepath, filename, folder, rating, is_starred, taken_at
+        SELECT filepath, filename, folder, is_starred, taken_at
         FROM photos
         WHERE is_starred = 1
         ORDER BY folder, taken_at, filename
@@ -1306,7 +1220,7 @@ def export_xmp():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT filename, folder, rating, is_starred
+        SELECT filename, folder, is_starred
         FROM photos
         WHERE is_starred = 1
         ORDER BY folder, taken_at, filename
@@ -1324,13 +1238,11 @@ def export_xmp():
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for photo in photos:
             # Generate XMP content
-            rating = photo.get('rating', 5) if photo.get('is_starred') else 0
             xmp_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
     <rdf:Description rdf:about=""
       xmlns:xmp="http://ns.adobe.com/xap/1.0/"
-      xmp:Rating="{rating}"
       xmp:Label="Select"/>
   </rdf:RDF>
 </x:xmpmeta>'''
@@ -1358,7 +1270,7 @@ def reset_selections():
 
     cursor.execute("""
         UPDATE photos
-        SET is_starred = 0, is_rejected = 0, rating = 0, updated_at = CURRENT_TIMESTAMP
+        SET is_starred = 0, is_rejected = 0, updated_at = CURRENT_TIMESTAMP
     """)
 
     affected = cursor.rowcount

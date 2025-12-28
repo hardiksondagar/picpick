@@ -164,6 +164,3 @@ export_jobs = {
 
 1. **[server.py](server.py)** - Add 6 new endpoints + background task logic
 2. **[static/index.html](static/index.html)** - New export modal markup
-3. **[static/app.js](static/app.js)** - Export logic with polling + cancel
-
-## Edge Cases Handled

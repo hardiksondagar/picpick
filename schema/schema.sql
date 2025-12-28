@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS photos (
     cluster_id INTEGER,
     duplicate_group_id INTEGER,
     is_cluster_representative BOOLEAN DEFAULT 0,
-    rating INTEGER DEFAULT 0,
     is_starred BOOLEAN DEFAULT 0,
     is_rejected BOOLEAN DEFAULT 0,
     notes TEXT,
@@ -59,7 +58,6 @@ CREATE TABLE IF NOT EXISTS indexing_jobs (
 -- Indexes for fast queries
 CREATE INDEX IF NOT EXISTS idx_photos_cluster ON photos(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_photos_duplicate_group ON photos(duplicate_group_id);
-CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);
 CREATE INDEX IF NOT EXISTS idx_photos_starred ON photos(is_starred);
 CREATE INDEX IF NOT EXISTS idx_photos_rejected ON photos(is_rejected);
 CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder);

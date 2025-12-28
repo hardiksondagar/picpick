@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Export Starred/Rated Photos
-Exports photos based on rating or starred status to a separate folder.
+Export Starred Photos
+Exports photos based on starred status to a separate folder.
 """
 
 import sqlite3
@@ -25,8 +25,7 @@ def get_db_connection():
 
 def export_photos(
     output_dir: Path,
-    min_rating: int = 3,
-    starred_only: bool = False,
+    starred_only: bool = True,
     copy_mode: bool = True,
     preserve_structure: bool = True
 ):
@@ -35,7 +34,6 @@ def export_photos(
 
     Args:
         output_dir: Directory to export photos to
-        min_rating: Minimum rating (0-5) to include
         starred_only: Only export starred photos
         copy_mode: If True, copy files. If False, create symlinks
         preserve_structure: If True, preserve folder structure
@@ -44,19 +42,13 @@ def export_photos(
     cursor = conn.cursor()
 
     # Build query
-    conditions = []
+    conditions = ["is_starred = 1"]
     params = []
-
-    if starred_only:
-        conditions.append("is_starred = 1")
-    else:
-        conditions.append("rating >= ?")
-        params.append(min_rating)
 
     where_clause = " AND ".join(conditions)
 
     cursor.execute(f"""
-        SELECT filepath, filename, folder, rating, is_starred
+        SELECT filepath, filename, folder, is_starred
         FROM photos
         WHERE {where_clause}
         ORDER BY folder, taken_at, filename
@@ -120,8 +112,7 @@ def export_photos(
 
 def export_file_list(
     output_file: Path,
-    min_rating: int = 3,
-    starred_only: bool = False,
+    starred_only: bool = True,
     format: str = 'txt'
 ):
     """
@@ -129,7 +120,6 @@ def export_file_list(
 
     Args:
         output_file: File to write the list to
-        min_rating: Minimum rating (0-5) to include
         starred_only: Only export starred photos
         format: Output format ('txt', 'json', 'csv')
     """
@@ -137,19 +127,13 @@ def export_file_list(
     cursor = conn.cursor()
 
     # Build query
-    conditions = []
+    conditions = ["is_starred = 1"]
     params = []
-
-    if starred_only:
-        conditions.append("is_starred = 1")
-    else:
-        conditions.append("rating >= ?")
-        params.append(min_rating)
 
     where_clause = " AND ".join(conditions)
 
     cursor.execute(f"""
-        SELECT filepath, filename, folder, rating, is_starred, taken_at
+        SELECT filepath, filename, folder, is_starred, taken_at
         FROM photos
         WHERE {where_clause}
         ORDER BY folder, taken_at, filename
@@ -172,7 +156,6 @@ def export_file_list(
             'filepath': photo['filepath'],
             'filename': photo['filename'],
             'folder': photo['folder'],
-            'rating': photo['rating'],
             'starred': bool(photo['is_starred']),
             'taken_at': photo['taken_at']
         } for photo in photos]
@@ -182,43 +165,33 @@ def export_file_list(
 
     elif format == 'csv':
         with open(output_file, 'w') as f:
-            f.write("filepath,filename,folder,rating,starred,taken_at\n")
+            f.write("filepath,filename,folder,starred,taken_at\n")
             for photo in photos:
-                f.write(f'"{photo["filepath"]}","{photo["filename"]}","{photo["folder"]}",{photo["rating"]},{photo["is_starred"]},{photo["taken_at"] or ""}\n')
+                f.write(f'"{photo["filepath"]}","{photo["filename"]}","{photo["folder"]}",{photo["is_starred"]},{photo["taken_at"] or ""}\n')
 
     print(f"✓ Exported list of {len(photos)} photos to {output_file}")
 
 
 def print_summary():
-    """Print summary of rated photos."""
+    """Print summary of starred photos."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
     print("="*50)
-    print("RATING SUMMARY")
+    print("SELECTION SUMMARY")
     print("="*50)
-
-    cursor.execute("""
-        SELECT rating, COUNT(*) as cnt
-        FROM photos
-        GROUP BY rating
-        ORDER BY rating DESC
-    """)
-
-    for row in cursor.fetchall():
-        stars = '★' * row['rating'] if row['rating'] > 0 else 'Unrated'
-        print(f"  {stars:12} : {row['cnt']:,} photos")
 
     cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
     starred = cursor.fetchone()['cnt']
     print(f"\n  {'★ Starred':12} : {starred:,} photos")
 
+    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_rejected = 1")
+    rejected = cursor.fetchone()['cnt']
+    print(f"  {'✗ Rejected':12} : {rejected:,} photos")
+
     print("\n" + "-"*50)
     print("RECOMMENDATION:")
-
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating >= 3")
-    keepers = cursor.fetchone()['cnt']
-    print(f"  Photos rated 3+ stars: {keepers:,}")
+    print(f"  Starred photos: {starred:,}")
     print(f"  (Target for album: 250-300)")
 
     conn.close()
@@ -227,12 +200,11 @@ def print_summary():
 def main():
     parser = argparse.ArgumentParser(description='PicBest - Export starred photos')
     parser.add_argument('--output', '-o', type=str, help='Output directory or file')
-    parser.add_argument('--min-rating', '-r', type=int, default=3, help='Minimum rating (0-5)')
-    parser.add_argument('--starred', '-s', action='store_true', help='Export only starred photos')
+    parser.add_argument('--starred', '-s', action='store_true', default=True, help='Export only starred photos')
     parser.add_argument('--symlink', action='store_true', help='Create symlinks instead of copying')
     parser.add_argument('--flat', action='store_true', help='Flat structure (no folders)')
     parser.add_argument('--list', '-l', type=str, choices=['txt', 'json', 'csv'], help='Export as file list')
-    parser.add_argument('--summary', action='store_true', help='Print rating summary only')
+    parser.add_argument('--summary', action='store_true', help='Print summary only')
 
     args = parser.parse_args()
 
@@ -254,12 +226,11 @@ def main():
         output_file = Path(args.output)
         if output_file.suffix == '':
             output_file = output_file.with_suffix(f'.{args.list}')
-        export_file_list(output_file, args.min_rating, args.starred, args.list)
+        export_file_list(output_file, args.starred, args.list)
     else:
         # Export files
         export_photos(
             Path(args.output),
-            args.min_rating,
             args.starred,
             copy_mode=not args.symlink,
             preserve_structure=not args.flat

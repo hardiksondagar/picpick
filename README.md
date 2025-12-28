@@ -29,7 +29,7 @@ PicBest uses **AI-powered clustering** to organize your photos intelligently:
 | 🎯 **Smart Clustering** | Groups visually similar photos using CLIP embeddings, so you only review one from each "burst" |
 | 📅 **Timeline View** | Photos organized by date and time, with visual separators for different events |
 | ⭐ **Quick Starring** | Keyboard shortcuts for rapid photo selection (S to star, arrows to navigate) |
-| 🔗 **Shareable Filters** | URL-based filters – share links like `?folder=day1&min_rating=3` |
+| 🔗 **Shareable Filters** | URL-based filters – share links like `?folder=day1&starred_only=true` |
 | 🗄️ **Multi-Database** | Switch between different photo collections from a dropdown |
 | 📤 **Easy Export** | Export starred photos to a folder, ready for your album |
 

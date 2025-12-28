@@ -79,15 +79,6 @@ const api = {
         return res.json();
     },
 
-    async updateRating(photoId, rating) {
-        const res = await fetch(`/api/photos/${photoId}/rating`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rating })
-        });
-        return res.json();
-    },
-
     async updateStar(photoId, isStarred) {
         const res = await fetch(`/api/photos/${photoId}/star`, {
             method: 'PUT',
@@ -102,15 +93,6 @@ const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_rejected: isRejected })
-        });
-        return res.json();
-    },
-
-    async updateClusterRating(clusterId, rating) {
-        const res = await fetch(`/api/clusters/${clusterId}/rating`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rating })
         });
         return res.json();
     }
@@ -706,7 +688,7 @@ function navigateModal(direction) {
 }
 
 // ============================================
-// Rating Functions
+// Star/Reject Functions
 // ============================================
 
 async function toggleStar() {

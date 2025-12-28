@@ -286,7 +286,6 @@ PicBest solves this by:
 │  │            │  │            │  │              │  │
 │  │ • filepath │  │ • rep_id   │  │ • status     │  │
 │  │ • metadata │  │ • count    │  │ • progress   │  │
-│  │ • rating   │  │            │  │              │  │
 │  │ • starred  │  │            │  │              │  │
 │  │ • embedding│  │            │  │              │  │
 │  └────────────┘  └────────────┘  └──────────────┘  │
@@ -360,7 +359,6 @@ User Request → API → Query DB → Generate Thumbnails → Return JSON
 - `embedding`: 512-dim CLIP vector (BLOB)
 - `cluster_id`: Foreign key to clusters
 - `is_cluster_representative`: Boolean
-- `rating`: 0-5 stars
 - `is_starred`: Boolean (selected)
 - `is_rejected`: Boolean (rejected)
 - `notes`: Text field
@@ -469,7 +467,7 @@ User Request → API → Query DB → Generate Thumbnails → Return JSON
 
 **XMP Sidecars**:
 - Lightroom-compatible
-- Sets rating and label
+- Sets label for selection
 - Professional workflow integration
 
 **Benefits**:
@@ -719,7 +717,6 @@ python export_starred.py --output /path/to/album
 
 # Options:
 #   --starred          Export only starred photos
-#   --min-rating N     Export photos rated N+ stars
 #   --symlink          Create symlinks instead of copying
 #   --flat             Flat structure (no folders)
 #   --list txt|json    Export as file list
@@ -859,16 +856,9 @@ Get overall statistics.
 {
   "total_photos": 5234,
   "total_clusters": 847,
-  "rated_photos": 423,
   "starred_photos": 287,
   "rejected_photos": 136,
-  "keeper_photos": 423,
-  "rating_distribution": {
-    "0": 4811,
-    "3": 156,
-    "4": 189,
-    "5": 78
-  },
+  "keeper_photos": 287,
   "folders": [
     {"name": "day1", "count": 2341},
     {"name": "day2", "count": 2893}
@@ -898,7 +888,6 @@ Get paginated list of clusters.
         "filepath": "/photos/day1/IMG_1234.jpg",
         "filename": "IMG_1234.jpg",
         "folder": "day1",
-        "rating": 0,
         "is_starred": false,
         "is_rejected": false,
         "taken_at": "2024-06-15T14:32:18",
@@ -926,7 +915,6 @@ Get all photos in a cluster.
       "filepath": "/photos/day1/IMG_1234.jpg",
       "filename": "IMG_1234.jpg",
       "folder": "day1",
-      "rating": 0,
       "is_starred": false,
       "is_rejected": false,
       "taken_at": "2024-06-15T14:32:18",
@@ -983,16 +971,6 @@ Toggle photo rejected status.
 ```json
 {
   "is_rejected": true
-}
-```
-
-#### PUT `/api/photos/{photo_id}/rating`
-Update photo rating.
-
-**Request Body**:
-```json
-{
-  "rating": 5
 }
 ```
 
@@ -1149,7 +1127,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 **Q: How do I backup my selections?**
-A: Copy `photos.db` file. It contains all ratings and selections.
+A: Copy `photos.db` file. It contains all your selections (starred/rejected photos).
 
 ---
 

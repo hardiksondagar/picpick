@@ -655,9 +655,6 @@ def print_stats():
     cursor.execute("SELECT COUNT(*) as cnt FROM clusters WHERE photo_count > 1")
     multi_clusters = cursor.fetchone()['cnt']
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE rating > 0")
-    rated = cursor.fetchone()['cnt']
-
     cursor.execute("SELECT COUNT(*) as cnt FROM photos WHERE is_starred = 1")
     starred = cursor.fetchone()['cnt']
 
@@ -685,7 +682,6 @@ def print_stats():
     print(f"  Singletons:      {total_clusters - multi_clusters}")
     if dup_stats['groups']:
         print(f"Duplicate groups:  {dup_stats['groups']} ({dup_stats['photos']} photos)")
-    print(f"Rated:             {rated}")
     print(f"Starred:           {starred}")
     print("\nPhotos by folder:")
     for f in folders:
@@ -773,7 +769,7 @@ def main():
     # Print final stats
     print_stats()
 
-    print("\n✓ Indexing complete! Run 'python server.py' to start the rating UI.")
+    print("\n✓ Indexing complete! Run 'python server.py' to start the UI.")
 
     # Mark job as complete
     if JOB_ID:
