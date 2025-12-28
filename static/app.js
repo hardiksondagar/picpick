@@ -20,6 +20,7 @@ const state = {
     folder: '',
     starredOnly: false,
     rejectedOnly: false,
+    hideReviewed: false,
 
     // Modal
     modalOpen: false,
@@ -64,6 +65,7 @@ const api = {
         if (state.folder) params.set('folder', state.folder);
         if (state.starredOnly) params.set('starred_only', 'true');
         if (state.rejectedOnly) params.set('rejected_only', 'true');
+        if (state.hideReviewed) params.set('hide_reviewed', 'true');
 
         const res = await fetch(`/api/clusters?${params}`);
         return res.json();
@@ -139,6 +141,7 @@ const elements = {
     filterFolder: document.getElementById('filter-folder'),
     filterStarred: document.getElementById('filter-starred'),
     filterRejected: document.getElementById('filter-rejected'),
+    filterHideReviewed: document.getElementById('filter-hide-reviewed'),
     logo: document.getElementById('logo'),
     helpBtn: document.getElementById('help-btn'),
     helpTooltip: document.getElementById('help-tooltip'),
@@ -843,8 +846,11 @@ function setupEventListeners() {
         state.starredOnly = !state.starredOnly;
         if (state.starredOnly) {
             state.rejectedOnly = false; // Can't show both
+            state.hideReviewed = false; // Can't hide reviewed when showing starred
             elements.filterRejected.classList.remove('text-red-400');
             elements.filterRejected.classList.add('text-slate-400');
+            elements.filterHideReviewed.classList.remove('text-primary-light');
+            elements.filterHideReviewed.classList.add('text-slate-400');
 
             elements.filterStarred.classList.remove('text-slate-400');
             elements.filterStarred.classList.add('text-green-400');
@@ -859,8 +865,11 @@ function setupEventListeners() {
         state.rejectedOnly = !state.rejectedOnly;
         if (state.rejectedOnly) {
             state.starredOnly = false; // Can't show both
+            state.hideReviewed = false; // Can't hide reviewed when showing rejected
             elements.filterStarred.classList.remove('text-green-400');
             elements.filterStarred.classList.add('text-slate-400');
+            elements.filterHideReviewed.classList.remove('text-primary-light');
+            elements.filterHideReviewed.classList.add('text-slate-400');
 
             elements.filterRejected.classList.remove('text-slate-400');
             elements.filterRejected.classList.add('text-red-400');
@@ -871,12 +880,32 @@ function setupEventListeners() {
         resetAndLoad();
     });
 
+    elements.filterHideReviewed.addEventListener('click', () => {
+        state.hideReviewed = !state.hideReviewed;
+        if (state.hideReviewed) {
+            state.starredOnly = false; // Can't show starred when hiding reviewed
+            state.rejectedOnly = false; // Can't show rejected when hiding reviewed
+            elements.filterStarred.classList.remove('text-green-400');
+            elements.filterStarred.classList.add('text-slate-400');
+            elements.filterRejected.classList.remove('text-red-400');
+            elements.filterRejected.classList.add('text-slate-400');
+
+            elements.filterHideReviewed.classList.remove('text-slate-400');
+            elements.filterHideReviewed.classList.add('text-primary-light');
+        } else {
+            elements.filterHideReviewed.classList.remove('text-primary-light');
+            elements.filterHideReviewed.classList.add('text-slate-400');
+        }
+        resetAndLoad();
+    });
+
     // Logo click to reset filters
     elements.logo.addEventListener('click', () => {
         // Reset filter state
         state.folder = '';
         state.starredOnly = false;
         state.rejectedOnly = false;
+        state.hideReviewed = false;
 
         // Update UI
         elements.filterFolder.value = '';
@@ -884,6 +913,8 @@ function setupEventListeners() {
         elements.filterStarred.classList.add('text-slate-400');
         elements.filterRejected.classList.remove('text-red-400');
         elements.filterRejected.classList.add('text-slate-400');
+        elements.filterHideReviewed.classList.remove('text-primary-light');
+        elements.filterHideReviewed.classList.add('text-slate-400');
 
         // Reload data
         resetAndLoad();
@@ -1305,6 +1336,7 @@ function readURLParams() {
     state.folder = params.get('folder') || '';
     state.starredOnly = params.get('selected') === 'true';
     state.rejectedOnly = params.get('rejected') === 'true';
+    state.hideReviewed = params.get('hide_reviewed') === 'true';
 
     // Update UI to match state
     elements.filterFolder.value = state.folder;
@@ -1322,6 +1354,13 @@ function readURLParams() {
         elements.filterRejected.classList.remove('text-red-400');
         elements.filterRejected.classList.add('text-slate-400');
     }
+    if (state.hideReviewed) {
+        elements.filterHideReviewed.classList.remove('text-slate-400');
+        elements.filterHideReviewed.classList.add('text-primary-light');
+    } else {
+        elements.filterHideReviewed.classList.remove('text-primary-light');
+        elements.filterHideReviewed.classList.add('text-slate-400');
+    }
 }
 
 function updateURL() {
@@ -1330,6 +1369,7 @@ function updateURL() {
     if (state.folder) params.set('folder', state.folder);
     if (state.starredOnly) params.set('selected', 'true');
     if (state.rejectedOnly) params.set('rejected', 'true');
+    if (state.hideReviewed) params.set('hide_reviewed', 'true');
 
     const newURL = params.toString()
         ? `${window.location.pathname}?${params.toString()}`

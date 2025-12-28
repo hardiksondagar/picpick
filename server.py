@@ -407,7 +407,8 @@ def get_clusters(
     folder: Optional[str] = None,
     starred_only: bool = False,
     rejected_only: bool = False,
-    unrated_only: bool = False
+    unrated_only: bool = False,
+    hide_reviewed: bool = False
 ):
     """Get clusters with their representative photos."""
     # Check if database exists
@@ -442,6 +443,9 @@ def get_clusters(
 
             if unrated_only:
                 conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
+
+            # Note: hide_reviewed doesn't make sense with starred_only/rejected_only
+            # since those already filter by review status
 
             where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -540,6 +544,17 @@ def get_clusters(
         if unrated_only:
             conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
 
+        # Hide reviewed clusters (where all photos in cluster are either starred or rejected)
+        if hide_reviewed:
+            conditions.append("""
+                EXISTS (
+                    SELECT 1 FROM photos p_unreviewed
+                    WHERE p_unreviewed.cluster_id = c.id
+                    AND p_unreviewed.is_starred = 0
+                    AND p_unreviewed.is_rejected = 0
+                )
+            """)
+
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
         join_clause = " ".join(joins) if joins else ""
 
@@ -573,6 +588,10 @@ def get_clusters(
                 unclustered_conditions.append("p.is_rejected = 1")
 
             if unrated_only:
+                unclustered_conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
+
+            # When hiding reviewed, only show unreviewed photos
+            if hide_reviewed:
                 unclustered_conditions.append("p.is_starred = 0 AND p.is_rejected = 0")
 
             unclustered_where = "WHERE " + " AND ".join(unclustered_conditions) if unclustered_conditions else ""
