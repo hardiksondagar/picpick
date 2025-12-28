@@ -26,6 +26,7 @@ const state = {
     currentClusterIndex: -1,
     currentPhotoIndex: 0,
     clusterPhotos: [],
+    clusterViewMode: 'grid', // 'grid' or 'vertical'
 
     // Selection (for keyboard nav)
     selectedIndex: -1,
@@ -70,6 +71,11 @@ const api = {
 
     async getClusterPhotos(clusterId) {
         const res = await fetch(`/api/clusters/${clusterId}/photos`);
+        return res.json();
+    },
+
+    async getPhotoAsCluster(photoId) {
+        const res = await fetch(`/api/photos/${photoId}/as-cluster`);
         return res.json();
     },
 
@@ -151,6 +157,7 @@ const elements = {
     filterFolder: document.getElementById('filter-folder'),
     filterStarred: document.getElementById('filter-starred'),
     filterRejected: document.getElementById('filter-rejected'),
+    logo: document.getElementById('logo'),
     helpBtn: document.getElementById('help-btn'),
     helpTooltip: document.getElementById('help-tooltip'),
 
@@ -178,9 +185,7 @@ const elements = {
     modal: document.getElementById('photo-modal'),
     modalImage: document.getElementById('modal-image'),
     modalFilename: document.getElementById('modal-filename'),
-    modalFolder: document.getElementById('modal-folder'),
     modalDatetime: document.getElementById('modal-datetime'),
-    modalDimensions: document.getElementById('modal-dimensions'),
     modalCluster: document.getElementById('modal-cluster'),
     modalExif: document.getElementById('modal-exif'),
     modalExifToggle: document.getElementById('modal-exif-toggle'),
@@ -191,6 +196,7 @@ const elements = {
     modalClose: document.getElementById('modal-close'),
     modalPrev: document.getElementById('modal-prev'),
     modalNext: document.getElementById('modal-next'),
+    modalPhotoCounter: document.getElementById('modal-photo-counter'),
     clusterCount: document.getElementById('cluster-count'),
     clusterGrid: document.getElementById('cluster-grid')
 };
@@ -371,25 +377,31 @@ async function openModal(clusterIndex) {
     const cluster = state.clusters[clusterIndex];
     if (!cluster) return;
 
-    // Load cluster photos
-    const data = await api.getClusterPhotos(cluster.cluster_id);
+    // Load cluster photos based on whether it's a real cluster or a single photo
+    let data;
+    if (cluster.cluster_id) {
+        // Real cluster - load all photos in the cluster
+        data = await api.getClusterPhotos(cluster.cluster_id);
+    } else {
+        // Single unclustered photo - load just that photo
+        data = await api.getPhotoAsCluster(cluster.representative.id);
+    }
     state.clusterPhotos = data.photos;
 
-    // Find the photo index that matches the current filter
-    let startIndex = 0;
+    // Find the photo that's shown in the grid (the representative)
+    const representativePhotoId = cluster.representative.id;
+    let startIndex = state.clusterPhotos.findIndex(p => p.id === representativePhotoId);
 
-    if (state.starredOnly) {
-        // Find first starred photo in cluster
-        startIndex = state.clusterPhotos.findIndex(p => p.is_starred);
-        if (startIndex === -1) startIndex = 0; // Fallback if none found
-    } else if (state.rejectedOnly) {
-        // Find first rejected photo in cluster
-        startIndex = state.clusterPhotos.findIndex(p => p.is_rejected);
-        if (startIndex === -1) startIndex = 0; // Fallback if none found
-    } else {
-        // No filter - open to representative photo if possible
-        startIndex = state.clusterPhotos.findIndex(p => p.is_representative);
-        if (startIndex === -1) startIndex = 0; // Fallback to first photo
+    // If representative not found (shouldn't happen), fallback to first matching filter
+    if (startIndex === -1) {
+        if (state.starredOnly) {
+            startIndex = state.clusterPhotos.findIndex(p => p.is_starred);
+        } else if (state.rejectedOnly) {
+            startIndex = state.clusterPhotos.findIndex(p => p.is_rejected);
+        } else {
+            startIndex = state.clusterPhotos.findIndex(p => p.is_representative);
+        }
+        if (startIndex === -1) startIndex = 0; // Final fallback
     }
 
     state.currentPhotoIndex = startIndex;
@@ -419,20 +431,18 @@ function renderModalContent() {
 
     // Info
     elements.modalFilename.textContent = photo.filename;
-    elements.modalFolder.textContent = `📁 ${photo.folder}`;
     elements.modalDatetime.textContent = photo.taken_at
         ? `📅 ${new Date(photo.taken_at).toLocaleString()}`
         : '📅 Unknown date';
-    elements.modalDimensions.textContent = `📐 ${photo.width} × ${photo.height}`;
     elements.modalCluster.textContent = `📷 Photo ${state.currentPhotoIndex + 1} of ${state.clusterPhotos.length} in cluster`;
 
-    // EXIF data
-    if (photo.exif_data && Object.keys(photo.exif_data).length > 0) {
-        elements.modalExif.classList.remove('hidden');
-        renderExifData(photo.exif_data);
-    } else {
-        elements.modalExif.classList.add('hidden');
-    }
+    // Update cluster position counter (global cluster number out of total clusters)
+    const globalClusterNumber = (state.currentPage - 1) * state.perPage + state.currentClusterIndex + 1;
+    const totalClusters = state.stats.total_clusters || state.clusters.length;
+    elements.modalPhotoCounter.textContent = `${globalClusterNumber} / ${totalClusters}`;
+
+    // Photo information (folder, dimensions, and camera data)
+    renderExifData(photo);
 
     // Star toggle (Select)
     if (photo.is_starred) {
@@ -468,118 +478,200 @@ function renderModalContent() {
     updateClusterThumbnailSelection();
 }
 
-function renderExifData(exif) {
-    const interesting = {
-        'Make': '📷',
-        'Model': '📷',
-        'LensModel': '🔍',
-        'FNumber': '⚪',
-        'ExposureTime': '⏱️',
-        'ISO': '🎞️',
-        'ISOSpeedRatings': '🎞️',
-        'FocalLength': '📏',
-        'Flash': '⚡',
-        'Orientation': '🔄'
-    };
+function renderExifData(photo) {
+    const parts = [];
 
-    const html = Object.entries(interesting)
-        .filter(([key]) => exif[key] !== undefined)
-        .map(([key, icon]) => {
-            let value = exif[key];
+    // General photo information
+    parts.push(`<div>📁 Folder: <span class="text-slate-300">${photo.folder}</span></div>`);
+    parts.push(`<div>📐 Dimensions: <span class="text-slate-300">${photo.width} × ${photo.height}</span></div>`);
 
-            // Format specific values
-            if (key === 'ExposureTime' && typeof value === 'number') {
-                value = value < 1 ? `1/${Math.round(1/value)}s` : `${value}s`;
-            } else if (key === 'FNumber' && typeof value === 'number') {
-                value = `f/${value}`;
-            } else if (key === 'FocalLength' && typeof value === 'number') {
-                value = `${value}mm`;
-            } else if ((key === 'ISO' || key === 'ISOSpeedRatings') && Array.isArray(value)) {
-                value = `ISO ${value[0]}`;
-            } else if (key === 'Flash') {
-                value = value === 0 ? 'Off' : 'On';
-            }
+    // Camera-specific information
+    if (photo.exif_data && Object.keys(photo.exif_data).length > 0) {
+        const exif = photo.exif_data;
+        const cameraFields = {
+            'Make': '📷 Camera',
+            'Model': '📷 Model',
+            'LensModel': '🔍 Lens',
+            'FNumber': '⚪ Aperture',
+            'ExposureTime': '⏱️ Shutter',
+            'ISO': '🎞️ ISO',
+            'ISOSpeedRatings': '🎞️ ISO',
+            'FocalLength': '📏 Focal Length',
+            'Flash': '⚡ Flash',
+            'Orientation': '🔄 Orientation'
+        };
 
-            return `<div>${icon} ${key}: <span class="text-slate-300">${value}</span></div>`;
-        })
-        .join('');
+        const cameraInfo = Object.entries(cameraFields)
+            .filter(([key]) => exif[key] !== undefined)
+            .map(([key, label]) => {
+                let value = exif[key];
 
-    elements.modalExifDetails.innerHTML = html || '<div class="text-slate-500">No camera data available</div>';
+                // Format specific values
+                if (key === 'ExposureTime' && typeof value === 'number') {
+                    value = value < 1 ? `1/${Math.round(1/value)}s` : `${value}s`;
+                } else if (key === 'FNumber' && typeof value === 'number') {
+                    value = `f/${value}`;
+                } else if (key === 'FocalLength' && typeof value === 'number') {
+                    value = `${value}mm`;
+                } else if ((key === 'ISO' || key === 'ISOSpeedRatings') && Array.isArray(value)) {
+                    value = `ISO ${value[0]}`;
+                } else if (key === 'Flash') {
+                    value = value === 0 ? 'Off' : 'On';
+                }
+
+                return `<div>${label}: <span class="text-slate-300">${value}</span></div>`;
+            })
+            .join('');
+
+        if (cameraInfo) {
+            parts.push(cameraInfo);
+        }
+    }
+
+    elements.modalExifDetails.innerHTML = parts.join('');
 }
 
 function renderClusterThumbnails() {
     elements.clusterCount.textContent = state.clusterPhotos.length;
     elements.clusterGrid.innerHTML = '';
 
-    state.clusterPhotos.forEach((photo, i) => {
-        const thumb = document.createElement('div');
-        const isCurrentClasses = i === state.currentPhotoIndex ? 'ring-2 ring-primary' : '';
-        thumb.className = `relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 border-2 border-transparent hover:border-primary hover:scale-105 ${isCurrentClasses}`;
-        thumb.dataset.index = i;
-        thumb.dataset.photoId = photo.id;
+    if (state.clusterViewMode === 'vertical') {
+        // Vertical view - show all photos in a single column with large previews
+        state.clusterPhotos.forEach((photo, i) => {
+            const item = document.createElement('div');
+            const isCurrentClasses = i === state.currentPhotoIndex ? 'ring-4 ring-primary' : 'ring-2 ring-transparent';
+            item.className = `relative rounded-lg overflow-hidden cursor-pointer transition-all duration-200 hover:ring-4 hover:ring-primary/70 hover:scale-[1.01] ${isCurrentClasses}`;
+            item.dataset.index = i;
+            item.dataset.photoId = photo.id;
 
-        // Show selected badge (green thumb up) or rejected badge (red thumb down)
-        let badge = '';
-        if (photo.is_starred) {
-            badge = `
-                <div class="absolute top-1 right-1 bg-black/70 rounded-full w-6 h-6 flex items-center justify-center">
-                    <i class="fa-solid fa-thumbs-up text-emerald-500 text-sm"></i>
-                </div>
-            `;
-        } else if (photo.is_rejected) {
-            badge = `
-                <div class="absolute top-1 right-1 bg-black/70 rounded-full w-6 h-6 flex items-center justify-center">
-                    <i class="fa-solid fa-thumbs-down text-rose-500 text-sm"></i>
-                </div>
-            `;
-        }
-
-        thumb.innerHTML = `
-            <img src="/api/image/${photo.id}?w=400" alt="" loading="lazy" class="w-full h-full object-cover">
-            ${badge}
-        `;
-
-        // Click image to select - use dataset.index or photo ID to ensure correct photo
-        thumb.addEventListener('click', (e) => {
-            const clickedIndex = parseInt(thumb.dataset.index);
-            const photoId = parseInt(thumb.dataset.photoId);
-
-            // Verify index is valid, or find by photo ID as fallback
-            let targetIndex = clickedIndex;
-            if (clickedIndex < 0 || clickedIndex >= state.clusterPhotos.length ||
-                state.clusterPhotos[clickedIndex]?.id !== photoId) {
-                // Index mismatch, find by photo ID
-                targetIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
+            // Show selected badge (green thumb up) or rejected badge (red thumb down)
+            let badge = '';
+            if (photo.is_starred) {
+                badge = `
+                    <div class="absolute top-3 right-3 bg-black/70 rounded-full w-8 h-8 flex items-center justify-center">
+                        <i class="fa-solid fa-thumbs-up text-emerald-500 text-lg"></i>
+                    </div>
+                `;
+            } else if (photo.is_rejected) {
+                badge = `
+                    <div class="absolute top-3 right-3 bg-black/70 rounded-full w-8 h-8 flex items-center justify-center">
+                        <i class="fa-solid fa-thumbs-down text-rose-500 text-lg"></i>
+                    </div>
+                `;
             }
 
-            if (targetIndex >= 0 && targetIndex < state.clusterPhotos.length) {
-                state.currentPhotoIndex = targetIndex;
-                renderModalContent();
-            }
+            item.innerHTML = `
+                <img src="/api/image/${photo.id}?w=1200" alt="" loading="lazy" class="w-full h-auto object-contain">
+                ${badge}
+                <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3">
+                    <div class="text-xs text-white/90 font-mono">${photo.filename}</div>
+                    <div class="text-xs text-white/70 mt-1">${photo.width} × ${photo.height}</div>
+                </div>
+            `;
+
+            // Click image to select
+            item.addEventListener('click', (e) => {
+                const clickedIndex = parseInt(item.dataset.index);
+                const photoId = parseInt(item.dataset.photoId);
+
+                let targetIndex = clickedIndex;
+                if (clickedIndex < 0 || clickedIndex >= state.clusterPhotos.length ||
+                    state.clusterPhotos[clickedIndex]?.id !== photoId) {
+                    targetIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
+                }
+
+                if (targetIndex >= 0 && targetIndex < state.clusterPhotos.length) {
+                    state.currentPhotoIndex = targetIndex;
+                    renderModalContent();
+                }
+            });
+
+            elements.clusterGrid.appendChild(item);
         });
+    } else {
+        // Grid view - original compact grid
+        elements.clusterGrid.className = 'grid grid-cols-3 gap-2.5';
 
-        elements.clusterGrid.appendChild(thumb);
-    });
+        state.clusterPhotos.forEach((photo, i) => {
+            const thumb = document.createElement('div');
+            const isCurrentClasses = i === state.currentPhotoIndex ? 'ring-2 ring-primary' : '';
+            thumb.className = `relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-200 border-2 border-transparent hover:border-primary hover:scale-105 ${isCurrentClasses}`;
+            thumb.dataset.index = i;
+            thumb.dataset.photoId = photo.id;
+
+            // Show selected badge (green thumb up) or rejected badge (red thumb down)
+            let badge = '';
+            if (photo.is_starred) {
+                badge = `
+                    <div class="absolute top-1 right-1 bg-black/70 rounded-full w-6 h-6 flex items-center justify-center">
+                        <i class="fa-solid fa-thumbs-up text-emerald-500 text-sm"></i>
+                    </div>
+                `;
+            } else if (photo.is_rejected) {
+                badge = `
+                    <div class="absolute top-1 right-1 bg-black/70 rounded-full w-6 h-6 flex items-center justify-center">
+                        <i class="fa-solid fa-thumbs-down text-rose-500 text-sm"></i>
+                    </div>
+                `;
+            }
+
+            thumb.innerHTML = `
+                <img src="/api/image/${photo.id}?w=400" alt="" loading="lazy" class="w-full h-full object-cover">
+                ${badge}
+            `;
+
+            // Click image to select
+            thumb.addEventListener('click', (e) => {
+                const clickedIndex = parseInt(thumb.dataset.index);
+                const photoId = parseInt(thumb.dataset.photoId);
+
+                let targetIndex = clickedIndex;
+                if (clickedIndex < 0 || clickedIndex >= state.clusterPhotos.length ||
+                    state.clusterPhotos[clickedIndex]?.id !== photoId) {
+                    targetIndex = state.clusterPhotos.findIndex(p => p.id === photoId);
+                }
+
+                if (targetIndex >= 0 && targetIndex < state.clusterPhotos.length) {
+                    state.currentPhotoIndex = targetIndex;
+                    renderModalContent();
+                }
+            });
+
+            elements.clusterGrid.appendChild(thumb);
+        });
+    }
 
     // Scroll selected into view
     scrollToSelectedThumb();
 }
 
 function updateClusterThumbnailSelection() {
-    const thumbs = elements.clusterGrid.querySelectorAll('[data-index]');
-    thumbs.forEach((thumb, i) => {
+    const items = elements.clusterGrid.querySelectorAll('[data-index]');
+    items.forEach((item, i) => {
         // Update ring state
         if (i === state.currentPhotoIndex) {
-            thumb.classList.add('ring-2', 'ring-primary');
+            if (state.clusterViewMode === 'vertical') {
+                item.classList.add('ring-4', 'ring-primary');
+                item.classList.remove('ring-2', 'ring-transparent');
+            } else {
+                item.classList.add('ring-2', 'ring-primary');
+            }
         } else {
-            thumb.classList.remove('ring-2', 'ring-primary');
+            if (state.clusterViewMode === 'vertical') {
+                item.classList.remove('ring-4', 'ring-primary');
+                item.classList.add('ring-2', 'ring-transparent');
+            } else {
+                item.classList.remove('ring-2', 'ring-primary');
+            }
         }
     });
     scrollToSelectedThumb();
 }
 
 function scrollToSelectedThumb() {
-    const selected = elements.clusterGrid.querySelector('.ring-primary');
+    const selected = state.clusterViewMode === 'vertical'
+        ? elements.clusterGrid.querySelector('.ring-primary')
+        : elements.clusterGrid.querySelector('.ring-primary');
     if (selected) {
         selected.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -762,6 +854,24 @@ function setupEventListeners() {
             elements.filterRejected.classList.remove('text-red-400');
             elements.filterRejected.classList.add('text-slate-400');
         }
+        resetAndLoad();
+    });
+
+    // Logo click to reset filters
+    elements.logo.addEventListener('click', () => {
+        // Reset filter state
+        state.folder = '';
+        state.starredOnly = false;
+        state.rejectedOnly = false;
+
+        // Update UI
+        elements.filterFolder.value = '';
+        elements.filterStarred.classList.remove('text-green-400');
+        elements.filterStarred.classList.add('text-slate-400');
+        elements.filterRejected.classList.remove('text-red-400');
+        elements.filterRejected.classList.add('text-slate-400');
+
+        // Reload data
         resetAndLoad();
     });
 

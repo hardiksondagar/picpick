@@ -127,7 +127,7 @@
             <div class="px-6 lg:px-10 py-5">
                 <div class="flex items-center justify-between gap-6 flex-wrap">
                     <div class="flex items-center gap-4 flex-1 min-w-0">
-                        <h1 class="text-3xl lg:text-4xl font-bold text-gradient tracking-tight">PicBest</h1>
+                        <h1 id="logo" class="text-3xl lg:text-4xl font-bold text-gradient tracking-tight cursor-pointer hover:opacity-80 transition-opacity">PicBest</h1>
                         <div class="hidden md:flex items-center gap-3 text-sm">
                             <div class="flex items-center gap-2 h-10 px-3 bg-slate-800/40 rounded-lg border border-slate-700/30">
                                 <i class="fa-solid fa-images text-slate-400 text-base"></i>
@@ -276,10 +276,7 @@
             <div class="modal-backdrop absolute inset-0 bg-slate-950/95 backdrop-blur-md"></div>
             <div class="modal-content relative bg-slate-800/95 backdrop-blur-xl rounded-3xl shadow-2xl max-w-[95vw] max-h-[95vh] flex flex-col lg:flex-row overflow-hidden border border-slate-700/50 animate-scale-in">
                 <button id="modal-close" class="absolute top-4 right-4 lg:top-6 lg:right-6 z-20 w-10 h-10 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-2xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">×</button>
-                <button id="modal-prev" class="absolute left-4 lg:left-6 top-1/2 -translate-y-1/2 z-20 w-12 h-12 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-3xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">‹</button>
-                <button id="modal-next" class="absolute right-4 lg:right-6 top-1/2 -translate-y-1/2 z-20 w-12 h-12 flex items-center justify-center rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-3xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">›</button>
-
-                <div class="flex-1 flex items-center justify-center bg-slate-900/50 p-6 lg:p-10 min-h-[50vh] lg:min-h-0">
+                <div class="flex-1 relative flex items-center justify-center bg-slate-900/50 p-6 lg:p-10 pb-20 lg:pb-20 min-h-[50vh] lg:min-h-0 group">
                     <img id="modal-image" src="" alt="" class="max-w-full max-h-full object-contain rounded-2xl shadow-2xl">
                 </div>
 
@@ -287,17 +284,9 @@
                     <div class="space-y-3">
                         <h3 id="modal-filename" class="text-xl font-bold text-slate-100 mb-4 break-words">filename.jpg</h3>
                         <div class="space-y-2.5">
-                            <p id="modal-folder" class="text-sm text-slate-400 flex items-center gap-2">
-                                <span class="text-lg">📁</span>
-                                <span>Folder</span>
-                            </p>
                             <p id="modal-datetime" class="text-sm text-slate-400 flex items-center gap-2">
                                 <span class="text-lg">📅</span>
                                 <span>Date & Time</span>
-                            </p>
-                            <p id="modal-dimensions" class="text-sm text-slate-400 flex items-center gap-2">
-                                <span class="text-lg">📐</span>
-                                <span>Dimensions</span>
                             </p>
                             <p id="modal-cluster" class="text-sm text-slate-400 flex items-center gap-2">
                                 <span class="text-lg">📷</span>
@@ -305,10 +294,10 @@
                             </p>
                         </div>
 
-                        <!-- EXIF Info -->
-                        <div id="modal-exif" class="mt-4 pt-4 border-t border-slate-700/50 hidden">
+                        <!-- Photo Information -->
+                        <div id="modal-exif" class="mt-4 pt-4 border-t border-slate-700/50">
                             <button id="modal-exif-toggle" class="text-xs text-slate-400 hover:text-primary transition-colors flex items-center gap-1">
-                                <span id="modal-exif-arrow">▶</span> Camera Info
+                                <span id="modal-exif-arrow">▶</span> Information
                             </button>
                             <div id="modal-exif-details" class="mt-2 space-y-1 text-xs text-slate-400 hidden"></div>
                         </div>
@@ -326,11 +315,21 @@
                     </div>
 
                     <div>
-                        <h4 class="text-base font-bold text-slate-300 mb-4">Similar Photos (<span id="cluster-count" class="text-primary-light">0</span>)</h4>
-                        <div id="cluster-grid" class="grid grid-cols-3 gap-2.5">
+                        <div class="flex items-center justify-between mb-4">
+                            <h4 class="text-base font-bold text-slate-300">Similar Photos (<span id="cluster-count" class="text-primary-light">0</span>)</h4>
+                            <span class="text-xs text-slate-600">↑ ↓ navigate</span>
+                        </div>
+                        <div id="cluster-grid" class="grid grid-cols-3 gap-2.5 max-h-[60vh] overflow-y-auto">
                             <!-- Cluster photos loaded dynamically -->
                         </div>
                     </div>
+                </div>
+
+                <!-- Bottom Navigation Bar -->
+                <div class="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-2 py-2 px-3 bg-slate-800/95 backdrop-blur-xl border-t border-slate-700/50 z-20">
+                    <button id="modal-prev" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">‹</button>
+                    <span id="modal-photo-counter" class="px-2 py-1 text-slate-200 font-medium text-sm">1 / 100</span>
+                    <button id="modal-next" class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/50 text-white text-xl hover:bg-gradient-primary hover:border-primary hover:scale-110 hover:shadow-glow transition-all">›</button>
                 </div>
             </div>
         </div>
@@ -452,6 +451,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=5"></script>
+    <script src="/static/app.js?v=7"></script>
 </body>
 </html>

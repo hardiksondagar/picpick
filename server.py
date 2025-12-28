@@ -4,6 +4,7 @@ PicBest - Smart Photo Curator - Web Server
 FastAPI backend for browsing and rating photos.
 """
 
+import logging
 import sqlite3
 import hashlib
 from pathlib import Path
@@ -442,7 +443,102 @@ def get_clusters(
         conn = get_db()
         cursor = conn.cursor()
 
-        # Build query
+        # If filtering by starred or rejected, show individual photos instead of clusters
+        if starred_only or rejected_only:
+            # Build conditions for individual photos
+            conditions = []
+            params = []
+
+            if folder:
+                conditions.append("p.folder = ?")
+                params.append(folder)
+
+            if min_rating is not None:
+                conditions.append("p.rating >= ?")
+                params.append(min_rating)
+
+            if starred_only:
+                conditions.append("p.is_starred = 1")
+
+            if rejected_only:
+                conditions.append("p.is_rejected = 1")
+
+            if unrated_only:
+                conditions.append("p.rating = 0")
+
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+            # Count total matching photos
+            count_query = f"""
+                SELECT COUNT(*) as cnt
+                FROM photos p
+                {where_clause}
+            """
+            cursor.execute(count_query, params)
+            total_row = cursor.fetchone()
+            total = total_row['cnt'] if total_row else 0
+
+            # Get individual photos as "clusters"
+            offset = (page - 1) * per_page
+            query = f"""
+                SELECT
+                    p.id as photo_id,
+                    p.filepath,
+                    p.filename,
+                    p.folder,
+                    p.rating,
+                    p.is_starred,
+                    p.is_rejected,
+                    p.taken_at,
+                    p.width,
+                    p.height,
+                    p.cluster_id
+                FROM photos p
+                {where_clause}
+                ORDER BY p.taken_at ASC, p.id ASC
+                LIMIT ? OFFSET ?
+            """
+            cursor.execute(query, params + [per_page, offset])
+
+            clusters = []
+            for row in cursor.fetchall():
+                # Get cluster info if photo belongs to a cluster
+                cluster_id = row['cluster_id']
+                photo_count = 1
+                if cluster_id:
+                    cursor.execute("SELECT photo_count FROM clusters WHERE id = ?", (cluster_id,))
+                    cluster_row = cursor.fetchone()
+                    if cluster_row:
+                        photo_count = cluster_row['photo_count']
+
+                clusters.append({
+                    'cluster_id': cluster_id,  # Can be None for unclustered photos
+                    'photo_count': photo_count,
+                    'representative': {
+                        'id': row['photo_id'],
+                        'filepath': row['filepath'],
+                        'filename': row['filename'],
+                        'folder': row['folder'],
+                        'rating': row['rating'],
+                        'is_starred': bool(row['is_starred']),
+                        'is_rejected': bool(row['is_rejected']),
+                        'taken_at': row['taken_at'],
+                        'width': row['width'],
+                        'height': row['height']
+                    }
+                })
+
+            conn.close()
+
+            return {
+                'clusters': clusters,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': (total + per_page - 1) // per_page
+            }
+
+        # Build query for cluster-based filtering
         conditions = []
         params = []
         joins = []
@@ -454,12 +550,6 @@ def get_clusters(
         if min_rating is not None:
             conditions.append("p.rating >= ?")
             params.append(min_rating)
-
-        if starred_only:
-            conditions.append("p.is_starred = 1")
-
-        if rejected_only:
-            conditions.append("p.is_rejected = 1")
 
         if unrated_only:
             conditions.append("p.rating = 0")
@@ -476,14 +566,32 @@ def get_clusters(
             {where_clause}
         """
         cursor.execute(count_query, params)
+        logging.info(f"Count query: {count_query}")
         total_row = cursor.fetchone()
         total = total_row['cnt'] if total_row else 0
 
         # If no clusters exist, show unclustered photos instead
         if total == 0:
             # Count unclustered photos
-            unclustered_conditions = conditions.copy() if conditions else []
+            # For unclustered photos, convert EXISTS clauses to direct checks
+            unclustered_conditions = []
             unclustered_params = params.copy()
+
+            if folder:
+                unclustered_conditions.append("p.folder = ?")
+
+            if min_rating is not None:
+                unclustered_conditions.append("p.rating >= ?")
+
+            if starred_only:
+                unclustered_conditions.append("p.is_starred = 1")
+
+            if rejected_only:
+                unclustered_conditions.append("p.is_rejected = 1")
+
+            if unrated_only:
+                unclustered_conditions.append("p.rating = 0")
+
             unclustered_where = "WHERE " + " AND ".join(unclustered_conditions) if unclustered_conditions else ""
 
             count_query = f"""
@@ -521,7 +629,7 @@ def get_clusters(
             clusters = []
             for row in cursor.fetchall():
                 clusters.append({
-                    'cluster_id': row['photo_id'],  # Use photo ID as cluster ID
+                    'cluster_id': None,  # Unclustered photos have no cluster
                     'photo_count': 1,
                     'representative': {
                         'id': row['photo_id'],
@@ -691,6 +799,50 @@ def get_photo(photo_id: int):
 
     conn.close()
     return photo
+
+
+@app.get("/api/photos/{photo_id}/as-cluster")
+def get_photo_as_cluster(photo_id: int):
+    """Get a single photo formatted as a cluster (for modal view)."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            id, filepath, filename, folder, rating, is_starred, is_rejected,
+            taken_at, width, height, is_cluster_representative, notes, exif_data
+        FROM photos
+        WHERE id = ?
+    """, (photo_id,))
+
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    photo = {
+        'id': row['id'],
+        'filepath': row['filepath'],
+        'filename': row['filename'],
+        'folder': row['folder'],
+        'rating': row['rating'],
+        'is_starred': bool(row['is_starred']),
+        'is_rejected': bool(row['is_rejected']),
+        'taken_at': row['taken_at'],
+        'width': row['width'],
+        'height': row['height'],
+        'is_representative': bool(row['is_cluster_representative']),
+        'notes': row['notes']
+    }
+
+    # Parse EXIF data if requested
+    if row['exif_data']:
+        try:
+            photo['exif_data'] = json.loads(row['exif_data'])
+        except json.JSONDecodeError:
+            photo['exif_data'] = {}
+
+    conn.close()
+    return {'photos': [photo], 'count': 1}
 
 
 @app.put("/api/photos/{photo_id}/rating")
