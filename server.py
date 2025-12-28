@@ -481,15 +481,30 @@ def get_clusters(
                 # Get cluster info if photo belongs to a cluster
                 cluster_id = row['cluster_id']
                 photo_count = 1
+                reviewed_count = 0
                 if cluster_id:
                     cursor.execute("SELECT photo_count FROM clusters WHERE id = ?", (cluster_id,))
                     cluster_row = cursor.fetchone()
                     if cluster_row:
                         photo_count = cluster_row['photo_count']
 
+                    # Count reviewed photos in this cluster
+                    cursor.execute("""
+                        SELECT COUNT(*) as reviewed_count
+                        FROM photos
+                        WHERE cluster_id = ? AND (is_starred = 1 OR is_rejected = 1)
+                    """, (cluster_id,))
+                    reviewed_row = cursor.fetchone()
+                    reviewed_count = reviewed_row['reviewed_count'] if reviewed_row else 0
+                else:
+                    # Single photo - check if reviewed
+                    if row['is_starred'] or row['is_rejected']:
+                        reviewed_count = 1
+
                 clusters.append({
                     'cluster_id': cluster_id,  # Can be None for unclustered photos
                     'photo_count': photo_count,
+                    'reviewed_count': reviewed_count,
                     'representative': {
                         'id': row['photo_id'],
                         'filepath': row['filepath'],
@@ -647,9 +662,19 @@ def get_clusters(
 
         clusters = []
         for row in cursor.fetchall():
+            # Count reviewed photos in this cluster
+            cursor.execute("""
+                SELECT COUNT(*) as reviewed_count
+                FROM photos
+                WHERE cluster_id = ? AND (is_starred = 1 OR is_rejected = 1)
+            """, (row['cluster_id'],))
+            reviewed_row = cursor.fetchone()
+            reviewed_count = reviewed_row['reviewed_count'] if reviewed_row else 0
+
             clusters.append({
                 'cluster_id': row['cluster_id'],
                 'photo_count': row['photo_count'],
+                'reviewed_count': reviewed_count,
                 'representative': {
                     'id': row['photo_id'],
                     'filepath': row['filepath'],

@@ -232,9 +232,42 @@ function createPhotoCard(cluster, index) {
         </div>`
         : '';
 
+    // Progress indicator
+    const reviewedCount = cluster.reviewed_count || 0;
+    const totalCount = cluster.photo_count || 1;
+    const allReviewed = reviewedCount === totalCount;
+    const progressPercent = totalCount > 0 ? (reviewedCount / totalCount) * 100 : 0;
+
+    let progressIndicator = '';
+    if (allReviewed && totalCount > 0) {
+        // Show checkmark
+        progressIndicator = `
+            <div class="absolute top-3 left-3 w-8 h-8 flex items-center justify-center bg-black/80 backdrop-blur-sm rounded-full shadow-lg border border-white/20">
+                <i class="fa-solid fa-check text-emerald-400 text-sm"></i>
+            </div>
+        `;
+    } else if (reviewedCount > 0) {
+        // Show progress ring (battery style)
+        const circumference = 2 * Math.PI * 11; // radius = 11
+        const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
+        progressIndicator = `
+            <div class="absolute top-3 left-3 w-8 h-8 flex items-center justify-center">
+                <svg class="w-full h-full transform -rotate-90">
+                    <circle cx="16" cy="16" r="11" stroke="rgba(255,255,255,0.2)" stroke-width="3" fill="rgba(0,0,0,0.8)"/>
+                    <circle cx="16" cy="16" r="11" stroke="#10b981" stroke-width="3" fill="none"
+                        stroke-dasharray="${circumference}"
+                        stroke-dashoffset="${strokeDashoffset}"
+                        stroke-linecap="round"
+                        class="transition-all duration-300"/>
+                </svg>
+            </div>
+        `;
+    }
+
     card.innerHTML = `
         <img src="/api/image/${photo.id}?w=400" alt="${photo.filename}" loading="lazy" class="w-full h-full object-cover">
         <div class="photo-card-overlay absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-transparent opacity-0 transition-opacity duration-200"></div>
+        ${progressIndicator}
         ${clusterBadge}
         <div class="photo-card-info absolute bottom-0 left-0 right-0 p-4 transform translate-y-full transition-transform duration-200">
             <div class="text-sm font-semibold text-white mb-1 truncate">${photo.filename}</div>
@@ -311,21 +344,20 @@ function updateCardInGrid(clusterIndex) {
     const cluster = state.clusters[clusterIndex];
     if (!cluster) return;
 
-    const card = elements.grid.children[clusterIndex];
+    // Find the card in the grid (need to account for date separators)
+    const allCards = Array.from(elements.grid.querySelectorAll('.photo-card'));
+    const card = allCards[clusterIndex];
     if (!card) return;
 
-    const photo = cluster.representative;
-
-    // Update star
-    let starEl = card.querySelector('.photo-card-star');
-    if (photo.is_starred && !starEl) {
-        starEl = document.createElement('div');
-        starEl.className = 'photo-card-star';
-        starEl.textContent = '★';
-        card.appendChild(starEl);
-    } else if (!photo.is_starred && starEl) {
-        starEl.remove();
+    // Recalculate reviewed count from current cluster photos if available
+    if (state.clusterPhotos && state.clusterPhotos.length > 0) {
+        const reviewedCount = state.clusterPhotos.filter(p => p.is_starred || p.is_rejected).length;
+        cluster.reviewed_count = reviewedCount;
     }
+
+    // Re-render the card
+    const newCard = createPhotoCard(cluster, clusterIndex);
+    card.replaceWith(newCard);
 }
 
 function updateSelection() {
